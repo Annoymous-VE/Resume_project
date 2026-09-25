@@ -54,3 +54,32 @@ async def test_adaptive_interview_lifecycle():
     )
     assert stop_res.has_next_question is False
     assert "Maximum configured interview rounds" in (stop_res.stop_reason or "")
+
+@pytest.mark.asyncio
+async def test_multi_criteria_extraction():
+    llm = MockLLMClient()
+    km = KnowledgeManager(llm_client=llm)
+
+    project = ExtractedProject(
+        id="p2",
+        name="Lead Engine",
+        description="Lead extraction and scoring",
+        technologies=["Python", "FastAPI"]
+    )
+    knowledge = km.initialize_knowledge(project)
+
+    # User answer mentioning both architecture and performance
+    rich_answer = "We used an asynchronous Celery queue with Redis to decouple API scraping, which cut latency down to 250ms."
+    updated_knowledge = await km.extract_and_merge_answer(
+        current_knowledge=knowledge,
+        target_area="architecture",
+        answer_text=rich_answer,
+        exchange_id="ex_test"
+    )
+
+    # Verify facts were categorized
+    evidence_cats = [e.category for e in updated_knowledge.evidence if e.source == "conversation"]
+    assert len(evidence_cats) >= 1
+    cov = km.compute_coverage(updated_knowledge)
+    assert cov.architecture != CoverageLevel.UNKNOWN
+

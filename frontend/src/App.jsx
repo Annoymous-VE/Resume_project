@@ -1,21 +1,175 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   uploadResume,
+  createProject,
   startInterview,
   submitAnswer,
+  continueInterview,
   generateCaseStudy,
-  fetchProjectKnowledge
+  getCaseStudyExportUrl
 } from "./api/client";
+
+function renderInline(text) {
+  const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code
+          key={i}
+          style={{
+            background: "#1e293b",
+            padding: "0.15rem 0.35rem",
+            borderRadius: "3px",
+            color: "#38bdf8",
+            fontSize: "0.9em"
+          }}
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return part;
+  });
+}
+
+function MarkdownRenderer({ content }) {
+  const lines = (content || "").split("\n");
+  const elements = [];
+  let currentBullets = [];
+
+  const flushBullets = () => {
+    if (currentBullets.length > 0) {
+      elements.push(
+        <ul key={`ul-${elements.length}`} className="cs-bullet-list">
+          {currentBullets.map((b, idx) => (
+            <li key={idx} style={{ whiteSpace: "pre-line" }}>{renderInline(b)}</li>
+          ))}
+        </ul>
+      );
+      currentBullets = [];
+    }
+  };
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushBullets();
+      return;
+    }
+
+    if (trimmed.startsWith("# ")) {
+      flushBullets();
+      elements.push(
+        <h1 key={`h1-${idx}`} className="cs-title">
+          {renderInline(trimmed.replace(/^#\s*/, ""))}
+        </h1>
+      );
+    } else if (trimmed.startsWith("## ")) {
+      flushBullets();
+      elements.push(
+        <h2 key={`h2-${idx}`} className="cs-h2">
+          {renderInline(trimmed.replace(/^##\s*/, ""))}
+        </h2>
+      );
+    } else if (trimmed.startsWith("### ")) {
+      flushBullets();
+      elements.push(
+        <h3 key={`h3-${idx}`} className="cs-h3">
+          {renderInline(trimmed.replace(/^###\s*/, ""))}
+        </h3>
+      );
+    } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      currentBullets.push(trimmed.replace(/^[-*]\s*/, ""));
+    } else if ((line.startsWith("  ") || line.startsWith("\t")) && currentBullets.length > 0) {
+      currentBullets[currentBullets.length - 1] += "\n" + trimmed;
+    } else if (trimmed.startsWith(">")) {
+      flushBullets();
+      elements.push(
+        <blockquote key={`quote-${idx}`} className="cs-callout">
+          {renderInline(trimmed.replace(/^>\s*/, ""))}
+        </blockquote>
+      );
+    } else {
+      flushBullets();
+      elements.push(
+        <p key={`p-${idx}`} className="cs-p">
+          {renderInline(trimmed)}
+        </p>
+      );
+    }
+  });
+
+  flushBullets();
+  return <div className="case-study-reader">{elements}</div>;
+}
 
 export default function App() {
   const [file, setFile] = useState(null);
+  const [resumeId, setResumeId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [generatingCaseStudy, setGeneratingCaseStudy] = useState(false);
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
   const [interviewSession, setInterviewSession] = useState(null);
   const [answerInput, setAnswerInput] = useState("");
+  const [pendingAnswer, setPendingAnswer] = useState(null);
   const [caseStudy, setCaseStudy] = useState(null);
   const [error, setError] = useState(null);
+  const [showRawMarkdown, setShowRawMarkdown] = useState(false);
+
+  // States for manual unlisted project creation
+  const [showAddProjectModal, setShowAddProjectModal] = useState(false);
+  const [addProjectForm, setAddProjectForm] = useState({
+    name: "",
+    description: "",
+    technologies: "",
+    contributions: "",
+    outcomes: "",
+    links: ""
+  });
+  const [addingProject, setAddingProject] = useState(false);
+  const [addProjectError, setAddProjectError] = useState(null);
+
+  const chatEndRef = useRef(null);
+  const caseStudyRef = useRef(null);
+
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [interviewSession?.exchanges, interviewSession?.current_question, loading, pendingAnswer]);
+
+  useEffect(() => {
+    if (caseStudy && caseStudyRef.current) {
+      caseStudyRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [caseStudy]);
+
+  const isStopPhrase = (text) => {
+    if (!text) return false;
+    const clean = text.trim().toLowerCase().replace(/[.!,?]+$/, "").trim();
+    const stopPhrases = [
+      "i have nothing more to add",
+      "nothing more to add",
+      "i have nothing to add",
+      "nothing to add",
+      "i don't have anything more to add",
+      "i dont have anything more to add",
+      "i do not have anything more to add",
+      "i have nothing else to add",
+      "nothing else to add",
+      "nothing more",
+      "no more to add",
+    ];
+    return (
+      stopPhrases.includes(clean) ||
+      clean.startsWith("i have nothing more to add") ||
+      clean.startsWith("nothing more to add")
+    );
+  };
 
   const handleUpload = async (e) => {
     e.preventDefault();
@@ -24,6 +178,7 @@ export default function App() {
     setError(null);
     try {
       const data = await uploadResume(file);
+      setResumeId(data.resume_id || null);
       setProjects(data.projects || []);
       if (data.projects && data.projects.length > 0) {
         setSelectedProject(data.projects[0]);
@@ -35,6 +190,91 @@ export default function App() {
     }
   };
 
+  const handleOpenAddProjectModal = () => {
+    setAddProjectForm({
+      name: "",
+      description: "",
+      technologies: "",
+      contributions: "",
+      outcomes: "",
+      links: ""
+    });
+    setAddProjectError(null);
+    setShowAddProjectModal(true);
+  };
+
+  const handleCloseAddProjectModal = () => {
+    if (addingProject) return;
+    setShowAddProjectModal(false);
+    setAddProjectError(null);
+  };
+
+  const handleAddProjectSubmit = async (e) => {
+    e.preventDefault();
+    const trimmedName = addProjectForm.name.trim();
+    const trimmedDesc = addProjectForm.description.trim();
+
+    if (!trimmedName) {
+      setAddProjectError("Project Name is mandatory.");
+      return;
+    }
+    if (!trimmedDesc) {
+      setAddProjectError("Project Description / Problem Statement is mandatory.");
+      return;
+    }
+
+    const parsedTechs = addProjectForm.technologies
+      .split(/[,;\n]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    if (parsedTechs.length === 0) {
+      setAddProjectError("At least one Technology is mandatory (e.g. React, Python).");
+      return;
+    }
+
+    const parsedContribs = addProjectForm.contributions
+      .split(/\n+/)
+      .map((c) => c.replace(/^[-*•]\s*/, "").trim())
+      .filter(Boolean);
+
+    const parsedOutcomes = addProjectForm.outcomes
+      .split(/\n+/)
+      .map((o) => o.replace(/^[-*•]\s*/, "").trim())
+      .filter(Boolean);
+
+    const parsedLinks = addProjectForm.links
+      .split(/[,;\n]+/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    setAddingProject(true);
+    setAddProjectError(null);
+
+    try {
+      const payload = {
+        resume_id: resumeId,
+        name: trimmedName,
+        description: trimmedDesc,
+        technologies: parsedTechs,
+        contributions: parsedContribs,
+        outcomes: parsedOutcomes,
+        links: parsedLinks
+      };
+
+      const newProject = await createProject(payload);
+      newProject.isManual = true;
+
+      setProjects((prev) => [newProject, ...prev]);
+      setSelectedProject(newProject);
+      setShowAddProjectModal(false);
+    } catch (err) {
+      setAddProjectError(err.message || "Failed to create custom project.");
+    } finally {
+      setAddingProject(false);
+    }
+  };
+
   const handleStartInterview = async (proj) => {
     setLoading(true);
     setError(null);
@@ -43,6 +283,9 @@ export default function App() {
       const session = await startInterview(proj.id);
       setInterviewSession(session);
       setCaseStudy(null);
+      setAnswerInput("");
+      setPendingAnswer(null);
+      setGeneratingCaseStudy(false);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -50,28 +293,59 @@ export default function App() {
     }
   };
 
-  const handleSubmitAnswer = async () => {
-    if (!interviewSession?.current_question || !answerInput.trim()) return;
+  const handleSubmitAnswer = async (overrideText = null) => {
+    const textToSend = typeof overrideText === "string" ? overrideText : answerInput;
+    if (!interviewSession?.current_question || !textToSend.trim()) return;
+
+    const trimmed = textToSend.trim();
+    const shouldStopAndGenerate = isStopPhrase(trimmed);
+
+    // Optimistically show user's response immediately in the chat feed
+    setPendingAnswer(trimmed);
+    setAnswerInput("");
     setLoading(true);
     setError(null);
+    if (shouldStopAndGenerate) {
+      setGeneratingCaseStudy(true);
+    }
+
     try {
       const updated = await submitAnswer(
         selectedProject.id,
         interviewSession.current_question.exchange_id,
-        answerInput
+        trimmed
       );
       setInterviewSession(updated);
-      setAnswerInput("");
+      setPendingAnswer(null);
+
+      // If user indicated "I have nothing more to add", automatically proceed for case study generation
+      if (shouldStopAndGenerate) {
+        setGeneratingCaseStudy(true);
+        const cs = await generateCaseStudy(selectedProject.id);
+        setCaseStudy(cs);
+      }
     } catch (err) {
       setError(err.message);
+      // Restore input text so user does not lose their typed response
+      setAnswerInput(trimmed);
+      setPendingAnswer(null);
     } finally {
       setLoading(false);
+      setGeneratingCaseStudy(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmitAnswer();
     }
   };
 
   const handleGenerateCaseStudy = async () => {
     if (!selectedProject) return;
     setLoading(true);
+    setGeneratingCaseStudy(true);
     setError(null);
     try {
       const cs = await generateCaseStudy(selectedProject.id);
@@ -80,8 +354,44 @@ export default function App() {
       setError(err.message);
     } finally {
       setLoading(false);
+      setGeneratingCaseStudy(false);
     }
   };
+
+  const handleContinueInterview = async () => {
+    if (!selectedProject) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const updated = await continueInterview(selectedProject.id);
+      setInterviewSession(updated);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const CRITERIA_AREAS = [
+    { key: "problem", label: "Problem" },
+    { key: "architecture", label: "Architecture" },
+    { key: "technical_decisions", label: "Decisions" },
+    { key: "challenges", label: "Challenges" },
+    { key: "solutions", label: "Solutions" },
+    { key: "tradeoffs", label: "Tradeoffs" },
+    { key: "performance", label: "Performance" },
+    { key: "impact", label: "Impact" },
+  ];
+
+  const coverage = interviewSession?.coverage || {};
+  const fulfilledCount = CRITERIA_AREAS.filter((c) => coverage[c.key] === "SUFFICIENT").length;
+  const progressPercent = Math.round((fulfilledCount / CRITERIA_AREAS.length) * 100);
+
+  const allEvidence = interviewSession?.evidence || [];
+  const conversationFacts = allEvidence.filter(
+    (e) => e.source === "conversation" || (e.source && e.source.startsWith("user_answer"))
+  );
+  const resumeFacts = allEvidence.filter((e) => e.source === "resume");
 
   return (
     <div className="container">
@@ -104,135 +414,637 @@ export default function App() {
         <p style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
           Upload any PDF, DOCX, or text resume. The system uses layout-aware parsing and semantic extraction.
         </p>
-        <form onSubmit={handleUpload} style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
-          <input
-            type="file"
-            accept=".pdf,.docx,.txt"
-            onChange={(e) => setFile(e.target.files[0])}
-          />
-          <button type="submit" className="btn" disabled={!file || loading}>
-            {loading ? "Processing..." : "Extract Projects"}
+        <div style={{ display: "flex", gap: "1rem", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <form onSubmit={handleUpload} style={{ display: "flex", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              type="file"
+              accept=".pdf,.docx,.txt"
+              onChange={(e) => setFile(e.target.files[0])}
+            />
+            <button type="submit" className="btn" disabled={!file || loading}>
+              {loading ? "Processing..." : "Extract Projects"}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleOpenAddProjectModal}
+            style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+          >
+            <span style={{ fontSize: "1.1rem", lineHeight: 1 }}>+</span> Add Project Manually
           </button>
-        </form>
+        </div>
       </section>
 
       {/* Step 2: Detected Projects */}
-      {projects.length > 0 && (
+      {(projects.length > 0 || resumeId) && (
         <section className="card">
-          <h2>2. Detected Projects ({projects.length})</h2>
-          {projects.map((p) => (
-            <div
-              key={p.id}
-              className={`project-item ${selectedProject?.id === p.id ? "selected" : ""}`}
-            >
-              <div>
-                <h3 style={{ margin: "0 0 0.3rem 0", color: "#fff" }}>{p.name}</h3>
-                <p style={{ margin: "0 0 0.5rem 0", color: "#94a3b8", fontSize: "0.85rem" }}>
-                  {p.description || "No description extracted."}
-                </p>
-                <div>
-                  {(p.technologies || []).map((t, idx) => (
-                    <span key={idx} className="tag">{t}</span>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <button
-                  className="btn"
-                  onClick={() => handleStartInterview(p)}
-                  disabled={loading}
-                >
-                  Select & Interview
-                </button>
-              </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "0.75rem" }}>
+            <div>
+              <h2 style={{ margin: 0 }}>2. Detected Technical Projects ({projects.length})</h2>
+              <p style={{ margin: "0.2rem 0 0 0", color: "#94a3b8", fontSize: "0.85rem" }}>
+                Select a project extracted from your resume or add an unlisted project to begin.
+              </p>
             </div>
-          ))}
-        </section>
-      )}
-
-      {/* Step 3: Adaptive Interview */}
-      {interviewSession && selectedProject && (
-        <section className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2>3. Adaptive Interview: {selectedProject.name}</h2>
-            <span style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
-              Round {interviewSession.round_count}
-            </span>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleOpenAddProjectModal}
+              style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+            >
+              <span style={{ fontSize: "1.1rem", lineHeight: 1 }}>+</span> Add Unlisted Project
+            </button>
           </div>
 
-          {/* Coverage Overview */}
-          <div style={{ margin: "1rem 0", display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-            {Object.entries(interviewSession.coverage || {}).map(([area, state]) => (
-              <span key={area} className={`coverage-pill cov-${state}`}>
-                {area}: {state}
-              </span>
-            ))}
-          </div>
-
-          {interviewSession.current_question ? (
-            <div style={{ marginTop: "1.5rem" }}>
-              <div style={{ background: "#090d16", padding: "1rem", borderRadius: "6px", borderLeft: "4px solid #38bdf8" }}>
-                <span style={{ color: "#38bdf8", fontWeight: "bold", fontSize: "0.8rem", textTransform: "uppercase" }}>
-                  Target: {interviewSession.current_question.target_area}
-                </span>
-                <p style={{ margin: "0.5rem 0 0 0", fontSize: "1.05rem" }}>
-                  {interviewSession.current_question.question}
-                </p>
-                {interviewSession.current_question.rationale && (
-                  <p style={{ margin: "0.5rem 0 0 0", color: "#64748b", fontSize: "0.8rem" }}>
-                    <em>Rationale: {interviewSession.current_question.rationale}</em>
-                  </p>
-                )}
-              </div>
-
-              <div style={{ marginTop: "1rem" }}>
-                <label style={{ fontSize: "0.85rem", color: "#94a3b8" }}>Your Response:</label>
-                <textarea
-                  value={answerInput}
-                  onChange={(e) => setAnswerInput(e.target.value)}
-                  placeholder="Provide technical specifics, decisions, tradeoffs, or challenges..."
-                />
-                <div style={{ marginTop: "0.75rem" }}>
-                  <button
-                    className="btn"
-                    onClick={handleSubmitAnswer}
-                    disabled={!answerInput.trim() || loading}
-                  >
-                    {loading ? "Evaluating..." : "Submit Answer"}
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={handleGenerateCaseStudy}
-                    disabled={loading}
-                  >
-                    Finish & Generate Now
-                  </button>
-                </div>
-              </div>
+          {projects.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "2.5rem 1rem", color: "#94a3b8", background: "#0f172a", borderRadius: "8px", border: "1px dashed #334155" }}>
+              <p style={{ margin: "0 0 1rem 0", fontSize: "1rem" }}>No technical projects detected from the resume.</p>
+              <button type="button" className="btn" onClick={handleOpenAddProjectModal}>
+                + Add Unlisted Project Manually
+              </button>
             </div>
           ) : (
-            <div style={{ marginTop: "1rem" }}>
-              <p style={{ color: "#34d399", fontWeight: "600" }}>
-                ✓ Interview complete! {interviewSession.stop_reason}
-              </p>
-              <button
-                className="btn"
-                onClick={handleGenerateCaseStudy}
-                disabled={loading}
-              >
-                {loading ? "Generating..." : "Generate Technical Case Study"}
-              </button>
+            <div>
+              {projects.map((p) => (
+                <div
+                  key={p.id}
+                  className={`project-item ${selectedProject?.id === p.id ? "selected" : ""}`}
+                >
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <h3 style={{ margin: "0 0 0.4rem 0", color: "#fff" }}>{p.name}</h3>
+                      {(p.isManual || p.source_blocks?.includes("manual_entry")) && (
+                        <span className="tag-manual">Manual</span>
+                      )}
+                    </div>
+                    <p style={{ margin: "0 0 0.5rem 0", color: "#94a3b8", fontSize: "0.9rem" }}>
+                      {p.description || "No description extracted."}
+                    </p>
+                    <div>
+                      {p.technologies?.map((t, idx) => (
+                        <span key={idx} className="tag">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <button
+                      className="btn"
+                      onClick={() => handleStartInterview(p)}
+                      disabled={loading}
+                    >
+                      Start Interview
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>
       )}
 
+      {/* Step 3: Adaptive Technical Chat - Split Screen */}
+      {interviewSession && selectedProject && (
+        <section className="card" style={{ padding: "1.25rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.35rem" }}>3. Adaptive Technical Chat: {selectedProject.name}</h2>
+              <p style={{ margin: "0.15rem 0 0 0", color: "#94a3b8", fontSize: "0.85rem" }}>
+                Concise chat on the left • Real-time extracted knowledge ledger on the right
+              </p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+              <span style={{ fontSize: "0.8rem", background: "#111827", border: "1px solid #334155", padding: "0.3rem 0.65rem", borderRadius: "14px", color: "#94a3b8" }}>
+                Round {interviewSession.round_count}
+              </span>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: "0.8rem", padding: "0.35rem 0.75rem" }}
+                onClick={handleGenerateCaseStudy}
+                disabled={loading}
+              >
+                Finish Early & Generate
+              </button>
+            </div>
+          </div>
+
+          <div className="interview-split-grid">
+            {/* Left Column: Chat Window */}
+            <div className="chat-window">
+              <div className="chat-header">
+                <div className="chat-bot-info">
+                  <div className="bot-avatar">🤖</div>
+                  <div>
+                    <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#f8fafc" }}>
+                      <span className="bot-status-dot" /> AI Case Study Lead
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
+                      {interviewSession.status === "completed" ? "Interview Finished" : "Asking high-value missing details"}
+                    </div>
+                  </div>
+                </div>
+                {interviewSession.current_question && (
+                  <span className="target-badge" style={{ margin: 0 }}>
+                    Target: {interviewSession.current_question.target_area}
+                  </span>
+                )}
+              </div>
+
+              {/* Chat Message Feed */}
+              <div className="chat-feed">
+                {/* Past Exchanges */}
+                {(interviewSession.exchanges || [])
+                  .filter((ex) => ex.answer !== null)
+                  .map((ex) => (
+                    <React.Fragment key={ex.id}>
+                      <div className="msg-wrapper-ai">
+                        <div className="bot-avatar">🤖</div>
+                        <div className="bubble-ai">
+                          <p style={{ margin: "0.25rem 0" }}>{ex.question}</p>
+                          {ex.rationale && <p className="bubble-tip">Rationale: {ex.rationale}</p>}
+                        </div>
+                      </div>
+                      <div className="msg-wrapper-user">
+                        <div className="bubble-user">
+                          {ex.answer}
+                        </div>
+                      </div>
+                    </React.Fragment>
+                  ))}
+
+                {/* Active Question Bubble */}
+                {interviewSession.current_question && (
+                  <div className="msg-wrapper-ai">
+                    <div className="bot-avatar">🤖</div>
+                    <div className="bubble-ai" style={{ borderLeft: "3px solid #38bdf8" }}>
+                      <p style={{ margin: "0.25rem 0", fontSize: "0.98rem", fontWeight: 500 }}>
+                        {interviewSession.current_question.question}
+                      </p>
+                      {interviewSession.current_question.rationale && (
+                        <p className="bubble-tip">
+                          <em>{interviewSession.current_question.rationale}</em>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Optimistic Pending User Response (visible immediately while AI processes) */}
+                {pendingAnswer && (
+                  <div className="msg-wrapper-user">
+                    <div className="bubble-user">
+                      {pendingAnswer}
+                    </div>
+                  </div>
+                )}
+
+                {/* Loading indicator */}
+                {loading && (
+                  <div className="msg-wrapper-ai">
+                    <div className="bot-avatar">🤖</div>
+                    <div className="chat-typing-indicator">
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span style={{ marginLeft: "0.35rem" }}>
+                        {generatingCaseStudy
+                          ? "Concluded interview. Generating case study..."
+                          : "Extracting facts & evaluating criteria..."}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Interview Complete Banner */}
+                {interviewSession.status === "completed" && (
+                  <div className="msg-wrapper-ai">
+                    <div className="bot-avatar" style={{ background: "linear-gradient(135deg, #059669, #34d399)" }}>✓</div>
+                    <div className="bubble-ai" style={{ borderLeft: "3px solid #34d399" }}>
+                      <span className="target-badge" style={{ color: "#34d399", background: "rgba(16, 185, 129, 0.15)", borderColor: "rgba(16, 185, 129, 0.4)" }}>
+                        Interview Complete
+                      </span>
+                      <p style={{ margin: "0.25rem 0" }}>
+                        🎉 {interviewSession.stop_reason || "All essential technical dimensions have been captured."}
+                      </p>
+                      <button
+                        className="btn"
+                        style={{ marginTop: "0.75rem", width: "100%" }}
+                        onClick={handleGenerateCaseStudy}
+                        disabled={loading}
+                      >
+                        {loading ? "Generating Case Study..." : "🚀 Generate Technical Case Study Now"}
+                      </button>
+
+                      {fulfilledCount < 8 && (
+                        <button
+                          className="btn"
+                          style={{
+                            marginTop: "0.5rem",
+                            width: "100%",
+                            background: "transparent",
+                            border: "1px solid #38bdf8",
+                            color: "#38bdf8",
+                            fontWeight: 600
+                          }}
+                          onClick={handleContinueInterview}
+                          disabled={loading}
+                        >
+                          💬 Continue Interview to Gather Remaining Topics ({8 - fulfilledCount} missing)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Quick Actions (when question is pending) */}
+              {interviewSession.current_question && !loading && (
+                <div className="chat-quick-actions">
+                  <span style={{ fontSize: "0.74rem", color: "#64748b", marginRight: "0.2rem" }}>Quick replies:</span>
+                  <button
+                    type="button"
+                    className="quick-chip"
+                    onClick={() => handleSubmitAnswer("Skip this question for now.")}
+                  >
+                    ⏭️ Skip topic
+                  </button>
+                  <button
+                    type="button"
+                    className="quick-chip"
+                    onClick={() => handleSubmitAnswer("No exact performance benchmarks recorded.")}
+                  >
+                    💡 No exact numbers
+                  </button>
+                  <button
+                    type="button"
+                    className="quick-chip"
+                    onClick={() => handleSubmitAnswer("Standard engineering conventions; no major tradeoffs.")}
+                  >
+                    🤷 Not applicable
+                  </button>
+                  <button
+                    type="button"
+                    className="quick-chip"
+                    style={{ borderColor: "rgba(239, 68, 68, 0.4)", color: "#fca5a5" }}
+                    onClick={() => handleSubmitAnswer("I have nothing more to add.")}
+                  >
+                    🛑 I have nothing more to add
+                  </button>
+                </div>
+              )}
+
+              {/* Chat Input Bar */}
+              {interviewSession.current_question && (
+                <div className="chat-input-bar">
+                  <textarea
+                    className="chat-input-field"
+                    rows={1}
+                    value={answerInput}
+                    onChange={(e) => setAnswerInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type your answer... (Enter to send, Shift+Enter for newline)"
+                    disabled={loading}
+                  />
+                  <button
+                    className="chat-send-btn"
+                    onClick={() => handleSubmitAnswer()}
+                    disabled={!answerInput.trim() || loading}
+                  >
+                    {loading ? "..." : "Send 💬"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Right Column: Live Knowledge Ledger */}
+            <div className="ledger-panel">
+              <div className="ledger-header">
+                <div className="progress-header-row">
+                  <strong style={{ color: "#f8fafc", fontSize: "0.92rem" }}>Live Knowledge Ledger</strong>
+                  <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.82rem" }}>
+                    {fulfilledCount}/8 Criteria ({progressPercent}%)
+                  </span>
+                </div>
+                <div className="progress-bar-bg">
+                  <div className="progress-bar-fill" style={{ width: `${progressPercent}%` }} />
+                </div>
+
+                {/* 8 Criteria Badges Grid */}
+                <div className="criteria-pill-grid">
+                  {CRITERIA_AREAS.map((c) => {
+                    const state = coverage[c.key] || "UNKNOWN";
+                    const icon = state === "SUFFICIENT" ? "✓" : state === "PARTIAL" ? "◐" : "—";
+                    return (
+                      <div key={c.key} className={`criteria-card cov-${state}`} title={`${c.label}: ${state}`}>
+                        <span>{c.label}</span>
+                        <span style={{ fontWeight: 800 }}>{icon}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Scrollable Ledger Facts */}
+              <div className="ledger-body">
+                {/* Captured from Conversation */}
+                <div>
+                  <div className="ledger-section-title">
+                    <span>💬 Captured in Chat</span>
+                    <span className="ledger-count-pill">{conversationFacts.length} facts</span>
+                  </div>
+                  {conversationFacts.length > 0 ? (
+                    conversationFacts.map((fact, idx) => (
+                      <div key={`conv-${idx}`} className="fact-item source-conversation">
+                        <span className="fact-tag">{fact.category || "detail"}</span>
+                        {fact.fact}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="ledger-empty-note">
+                      Answers you provide in the chat will be dynamically analyzed and categorized here in real time.
+                    </div>
+                  )}
+                </div>
+
+                {/* Retrieved from Resume */}
+                <div>
+                  <div className="ledger-section-title">
+                    <span>📄 Retrieved from Resume</span>
+                    <span className="ledger-count-pill">{resumeFacts.length} facts</span>
+                  </div>
+                  {resumeFacts.length > 0 ? (
+                    resumeFacts.map((fact, idx) => (
+                      <div key={`res-${idx}`} className="fact-item">
+                        <span className="fact-tag">{fact.category || "resume"}</span>
+                        {fact.fact}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="ledger-empty-note">
+                      Initial resume facts loaded from project extraction.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="ledger-footer">
+                <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+                  Ready to generate anytime?
+                </span>
+                <button
+                  className="btn"
+                  style={{ padding: "0.45rem 0.85rem", fontSize: "0.82rem" }}
+                  onClick={handleGenerateCaseStudy}
+                  disabled={loading}
+                >
+                  {loading ? "Generating..." : "Finish & Generate Now"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Step 4: Final Technical Case Study */}
       {caseStudy && (
-        <section className="card">
-          <h2>4. Technical Case Study</h2>
-          <pre>{caseStudy.markdown_content}</pre>
+        <section className="card cs-printable-section" ref={caseStudyRef}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
+            <h2 style={{ margin: 0 }}>4. Technical Case Study</h2>
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: "0.8rem", padding: "0.3rem 0.7rem" }}
+              onClick={() => setShowRawMarkdown(!showRawMarkdown)}
+            >
+              {showRawMarkdown ? "👁️ View Formatted Case Study" : "📝 View Raw Markdown"}
+            </button>
+          </div>
+
+          {/* Export Toolbar */}
+          <div className="export-bar">
+            <span style={{ fontSize: "0.85rem", color: "#94a3b8", fontWeight: 600, marginRight: "0.25rem" }}>
+              Download / Export:
+            </span>
+            <a
+              href={getCaseStudyExportUrl(selectedProject.id, "pdf")}
+              className="btn-export primary-export"
+              target="_blank"
+              rel="noopener noreferrer"
+              download
+            >
+              📄 Download PDF
+            </a>
+            <a
+              href={getCaseStudyExportUrl(selectedProject.id, "docx")}
+              className="btn-export"
+              target="_blank"
+              rel="noopener noreferrer"
+              download
+            >
+              📝 Download Word (.docx)
+            </a>
+            <a
+              href={getCaseStudyExportUrl(selectedProject.id, "md")}
+              className="btn-export"
+              target="_blank"
+              rel="noopener noreferrer"
+              download
+            >
+              📋 Download Markdown (.md)
+            </a>
+            <button
+              className="btn-export"
+              onClick={() => window.print()}
+            >
+              🖨️ Print / Save as PDF
+            </button>
+          </div>
+
+          {showRawMarkdown ? (
+            <pre>{caseStudy.markdown_content}</pre>
+          ) : (
+            <MarkdownRenderer content={caseStudy.markdown_content} />
+          )}
         </section>
+      )}
+
+      {/* Modal: Add Unlisted Project */}
+      {showAddProjectModal && (
+        <div className="modal-backdrop" onClick={handleCloseAddProjectModal}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: "0 0 0.25rem 0", fontSize: "1.2rem", color: "#fff" }}>
+                  Add Unlisted Technical Project
+                </h3>
+                <p style={{ margin: 0, fontSize: "0.82rem", color: "#94a3b8" }}>
+                  Add a project not mentioned on your resume to conduct the interview and generate a technical case study.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={handleCloseAddProjectModal}
+                disabled={addingProject}
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAddProjectSubmit}>
+              <div className="modal-body">
+                {addProjectError && (
+                  <div style={{
+                    padding: "0.65rem 0.85rem",
+                    marginBottom: "1rem",
+                    background: "rgba(239, 68, 68, 0.12)",
+                    border: "1px solid rgba(239, 68, 68, 0.35)",
+                    borderRadius: "6px",
+                    color: "#fca5a5",
+                    fontSize: "0.85rem"
+                  }}>
+                    ⚠️ {addProjectError}
+                  </div>
+                )}
+
+                {/* Field 1: Project Name (Mandatory) */}
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Project Name <span style={{ color: "#f87171" }}>*</span></span>
+                    <span className="required-badge">Mandatory</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. Real-Time Telemetry Pipeline & Anomaly Detector"
+                    value={addProjectForm.name}
+                    onChange={(e) => setAddProjectForm({ ...addProjectForm, name: e.target.value })}
+                    required
+                    autoFocus
+                    disabled={addingProject}
+                  />
+                </div>
+
+                {/* Field 2: Description (Mandatory) */}
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Description / Problem Statement <span style={{ color: "#f87171" }}>*</span></span>
+                    <span className="required-badge">Mandatory</span>
+                  </label>
+                  <textarea
+                    className="form-textarea"
+                    rows={3}
+                    placeholder="Briefly describe what this project does and the primary problem or requirement it addresses..."
+                    value={addProjectForm.description}
+                    onChange={(e) => setAddProjectForm({ ...addProjectForm, description: e.target.value })}
+                    required
+                    disabled={addingProject}
+                  />
+                  <div className="form-help">
+                    Summarize what the system does and why it was built.
+                  </div>
+                </div>
+
+                {/* Field 3: Technologies (Mandatory) */}
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Technologies & Tech Stack <span style={{ color: "#f87171" }}>*</span></span>
+                    <span className="required-badge">Mandatory</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. Python, FastAPI, React, Redis, PostgreSQL, Docker"
+                    value={addProjectForm.technologies}
+                    onChange={(e) => setAddProjectForm({ ...addProjectForm, technologies: e.target.value })}
+                    required
+                    disabled={addingProject}
+                  />
+                  <div className="form-help">
+                    Enter tools, languages, or frameworks separated by commas.
+                  </div>
+                </div>
+
+                {/* Field 4: Contributions (Optional) */}
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Key Contributions & Architecture</span>
+                    <span className="optional-badge">Optional</span>
+                  </label>
+                  <textarea
+                    className="form-textarea"
+                    rows={2}
+                    placeholder="e.g. Engineered event stream ingestion worker; implemented fallback caching with Redis..."
+                    value={addProjectForm.contributions}
+                    onChange={(e) => setAddProjectForm({ ...addProjectForm, contributions: e.target.value })}
+                    disabled={addingProject}
+                  />
+                  <div className="form-help">
+                    Optional: Specific modules, algorithms, or architecture designs you built.
+                  </div>
+                </div>
+
+                {/* Field 5: Outcomes & Metrics (Optional) */}
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Measurable Outcomes & Metrics</span>
+                    <span className="optional-badge">Optional</span>
+                  </label>
+                  <textarea
+                    className="form-textarea"
+                    rows={2}
+                    placeholder="e.g. Processed 10k events/sec; reduced mean time to detect anomalies from 15m to 20s..."
+                    value={addProjectForm.outcomes}
+                    onChange={(e) => setAddProjectForm({ ...addProjectForm, outcomes: e.target.value })}
+                    disabled={addingProject}
+                  />
+                  <div className="form-help">
+                    Optional: Latency numbers, throughput, cost savings, or user adoption metrics.
+                  </div>
+                </div>
+
+                {/* Field 6: Links (Optional) */}
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Project Links / GitHub URL</span>
+                    <span className="optional-badge">Optional</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. https://github.com/example/pipeline"
+                    value={addProjectForm.links}
+                    onChange={(e) => setAddProjectForm({ ...addProjectForm, links: e.target.value })}
+                    disabled={addingProject}
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleCloseAddProjectModal}
+                  disabled={addingProject}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn"
+                  disabled={addingProject}
+                >
+                  {addingProject ? "Adding Project..." : "Save & Add Project"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

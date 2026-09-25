@@ -22,14 +22,29 @@ class ProjectRepository:
         result = await self.db.execute(select(Resume).where(Resume.id == resume_id))
         return result.scalars().first()
 
-    async def create_project(self, resume_id: str, name: str, description: Optional[str], data_json: dict, confidence: float = 1.0) -> Project:
-        project = Project(
-            resume_id=resume_id,
-            name=name,
-            description=description,
-            data_json=data_json,
-            confidence=confidence
-        )
+    async def get_latest_resume(self) -> Optional[Resume]:
+        result = await self.db.execute(select(Resume).order_by(Resume.created_at.desc()))
+        return result.scalars().first()
+
+    async def create_project(
+        self,
+        resume_id: Optional[str],
+        name: str,
+        description: Optional[str],
+        data_json: dict,
+        confidence: float = 1.0,
+        id: Optional[str] = None
+    ) -> Project:
+        params = {
+            "resume_id": resume_id,
+            "name": name,
+            "description": description,
+            "data_json": data_json,
+            "confidence": confidence
+        }
+        if id:
+            params["id"] = id
+        project = Project(**params)
         self.db.add(project)
         await self.db.flush()
         return project

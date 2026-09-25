@@ -21,6 +21,19 @@ export async function fetchProjects() {
   return res.json();
 }
 
+export async function createProject(projectData) {
+  const res = await fetch(`${API_BASE}/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(projectData),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to create project.");
+  }
+  return res.json();
+}
+
 export async function fetchProjectKnowledge(projectId) {
   const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`);
   if (!res.ok) throw new Error("Failed to fetch project knowledge.");
@@ -45,6 +58,14 @@ export async function submitAnswer(projectId, exchangeId, answer) {
   return res.json();
 }
 
+export async function continueInterview(projectId) {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/interview/continue`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to continue interview.");
+  return res.json();
+}
+
 export async function fetchInterviewStatus(projectId) {
   const res = await fetch(`${API_BASE}/projects/${projectId}/interview/status`);
   if (!res.ok) throw new Error("Failed to fetch interview status.");
@@ -64,3 +85,8 @@ export async function fetchCaseStudy(projectId) {
   if (!res.ok) throw new Error("Case study not found.");
   return res.json();
 }
+
+export function getCaseStudyExportUrl(projectId, format) {
+  return `${API_BASE}/projects/${projectId}/case-study/export/${format}`;
+}
+

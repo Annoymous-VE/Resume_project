@@ -58,6 +58,48 @@ class MockLLMClient(BaseLLMClient):
                 extraction_summary="Extracted 2 technical projects from resume document blocks."
             )
 
+        if schema_name == "ExtractedAnswerFacts":
+            from app.ai.schemas.knowledge import ExtractedAnswerFacts, ExtractedFactItem
+            facts = []
+            lower_prompt = prompt.lower()
+            # Extract target area or any detected topics
+            lines = [line.strip("- *• \t\r\n") for line in prompt.split("\n") if len(line.strip()) > 5]
+            ans_text = ""
+            if '"""' in prompt:
+                parts = prompt.split('"""')
+                if len(parts) >= 2:
+                    ans_text = parts[1].strip()
+            if not ans_text:
+                ans_text = lines[-1] if lines else "Provided project details."
+
+            # Do not extract facts if the user is asking a question or requesting clarification
+            ans_clean = ans_text.lower().strip()
+            is_question_or_clarification = (
+                "?" in ans_clean
+                or any(phrase in ans_clean for phrase in [
+                    "what do you mean", "can you explain", "could you explain", "don't understand",
+                    "dont understand", "i'm confused", "im confused", "what does", "give me an example",
+                    "what should i", "how should i", "what part", "help me", "rephrase", "simplify"
+                ])
+            )
+            if is_question_or_clarification:
+                return schema(facts=[])
+
+            # Categorize heuristically for mock
+            if any(w in ans_text.lower() for w in ["latency", "speed", "ms", "sec", "%", "throughput", "rpm", "qps", "faster"]):
+                facts.append(ExtractedFactItem(category="performance", fact=ans_text))
+            if any(w in ans_text.lower() for w in ["bug", "issue", "bottleneck", "fail", "timeout", "challenge", "hard", "error"]):
+                facts.append(ExtractedFactItem(category="challenges", fact=ans_text))
+            if any(w in ans_text.lower() for w in ["decided", "chose", "selected", "instead of", "tradeoff", "versus", "vs"]):
+                facts.append(ExtractedFactItem(category="technical_decisions", fact=ans_text))
+            if any(w in ans_text.lower() for w in ["flow", "queue", "api", "database", "redis", "fastapi", "service", "pipeline", "component"]):
+                facts.append(ExtractedFactItem(category="architecture", fact=ans_text))
+            
+            if not facts:
+                # Default to architecture or problem
+                facts.append(ExtractedFactItem(category="architecture", fact=ans_text))
+            return schema(facts=facts)
+
         if schema_name == "InitialQuestionsResult":
             from app.ai.schemas.question import InitialQuestionsResult, GeneratedQuestion
             return schema(
@@ -65,20 +107,20 @@ class MockLLMClient(BaseLLMClient):
                     GeneratedQuestion(
                         id="q_prob_1",
                         target_area="problem",
-                        question="What specific operational bottlenecks or business problem motivated building this architecture?",
-                        rationale="Establishes real-world context and core engineering motivation."
+                        question="In a nutshell, what real-world problem or pain point was this built to solve?",
+                        rationale="Clarifies the core motivation and problem statement in plain terms."
                     ),
                     GeneratedQuestion(
                         id="q_arch_1",
                         target_area="architecture",
-                        question="Could you detail the internal component architecture and how data flows across the system?",
-                        rationale="Uncovers component boundaries, communication protocols, and message patterns."
+                        question="How does data move through the system from start to finish? (A quick high-level summary is great!)",
+                        rationale="Uncovers component flow and service interactions simply."
                     ),
                     GeneratedQuestion(
                         id="q_dec_1",
                         target_area="technical_decisions",
-                        question="What key tradeoffs led to selecting this particular tech stack over alternatives?",
-                        rationale="Surfaces architectural justification and decision-making rigor."
+                        question="What was the main reason you picked this specific tech stack over other alternatives?",
+                        rationale="Highlights key technical decision-making criteria."
                     )
                 ]
             )
@@ -86,19 +128,26 @@ class MockLLMClient(BaseLLMClient):
         if schema_name == "FollowUpQuestionResult":
             from app.ai.schemas.question import FollowUpQuestionResult, GeneratedQuestion
             from app.ai.schemas.knowledge import CoverageLevel
+            import re
 
-            # Check if answer mentions challenges or performance
+            # Extract target area from prompt if present
+            target = "challenges"
+            match = re.search(r"(?:Primary Missing Area to Target|Target the missing area|Focus Area):\s*(\w+)", prompt, re.IGNORECASE)
+            if not match:
+                match = re.search(r"target_area:\s*(\w+)", prompt, re.IGNORECASE)
+            if match:
+                target = match.group(1).strip()
+
             return schema(
                 has_next_question=True,
                 question=GeneratedQuestion(
-                    id="q_chal_1",
-                    target_area="challenges",
-                    question="What was the most unexpected technical failure or scale barrier encountered in production, and how did you resolve it?",
-                    rationale="Deep-dives into problem solving and resilience engineering."
+                    id=f"q_{target}_1",
+                    target_area=target,
+                    question=f"Could you explain the specific technical mechanisms and implementation details for {target}?",
+                    rationale=f"Captures high-value technical depth for {target}."
                 ),
                 coverage_update={
-                    "problem": CoverageLevel.SUFFICIENT,
-                    "architecture": CoverageLevel.PARTIAL
+                    target: CoverageLevel.PARTIAL
                 }
             )
 
@@ -108,12 +157,23 @@ class MockLLMClient(BaseLLMClient):
     async def generate_text(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         return "# Technical Case Study\n\n## Overview\nGenerated technical case study analysis."
 
+def _clean_schema_dict(d: Any) -> Any:
+    """Recursively remove 'additionalProperties' and disallowed fields from schema dict for Gemini Developer API."""
+    if isinstance(d, dict):
+        d.pop("additionalProperties", None)
+        for k, v in list(d.items()):
+            _clean_schema_dict(v)
+    elif isinstance(d, list):
+        for item in d:
+            _clean_schema_dict(item)
+    return d
+
 class GeminiLLMClient(BaseLLMClient):
     DEFAULT_FALLBACK_MODELS = [
         "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-flash-latest"
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-3.1-flash-lite"
     ]
 
     def __init__(self, api_key: str, model_name: str = "gemini-3.5-flash-lite"):
@@ -131,9 +191,10 @@ class GeminiLLMClient(BaseLLMClient):
         loop = asyncio.get_running_loop()
 
         def _call():
+            cleaned_schema = _clean_schema_dict(schema.model_json_schema())
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=schema,
+                response_schema=cleaned_schema,
             )
             if system_prompt:
                 config.system_instruction = system_prompt

@@ -29,8 +29,8 @@ def get_resume_parser() -> ResumeParser:
 def get_project_extractor(llm: BaseLLMClient = Depends(get_llm)) -> ProjectExtractor:
     return ProjectExtractor(llm)
 
-def get_knowledge_manager() -> KnowledgeManager:
-    return KnowledgeManager()
+def get_knowledge_manager(llm: BaseLLMClient = Depends(get_llm)) -> KnowledgeManager:
+    return KnowledgeManager(llm)
 
 def get_interview_engine(llm: BaseLLMClient = Depends(get_llm)) -> InterviewEngine:
     return InterviewEngine(llm)

@@ -27,7 +27,7 @@ class Settings(BaseModel):
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "").strip()
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-3.5-flash-lite").strip()
 
-    # Interview defaults
-    MAX_INTERVIEW_ROUNDS: int = int(os.getenv("MAX_INTERVIEW_ROUNDS", "5"))
+    # Interview defaults (7 rounds max guarantees high efficiency without infinite loops)
+    MAX_INTERVIEW_ROUNDS: int = int(os.getenv("MAX_INTERVIEW_ROUNDS", "7"))
 
 settings = Settings()

@@ -49,3 +49,11 @@ class KnowledgeCoverage(BaseModel):
     tradeoffs: CoverageLevel = CoverageLevel.UNKNOWN
     performance: CoverageLevel = CoverageLevel.UNKNOWN
     impact: CoverageLevel = CoverageLevel.UNKNOWN
+
+class ExtractedFactItem(BaseModel):
+    category: str = Field(..., description="One of: problem, architecture, technical_decisions, challenges, solutions, tradeoffs, performance, impact")
+    fact: str = Field(..., description="Concise technical fact extracted from candidate answer")
+
+class ExtractedAnswerFacts(BaseModel):
+    facts: List[ExtractedFactItem] = Field(default_factory=list)
+

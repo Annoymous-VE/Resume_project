@@ -26,7 +26,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    resume_id = Column(String(36), ForeignKey("resumes.id", ondelete="CASCADE"), nullable=False)
+    resume_id = Column(String(36), ForeignKey("resumes.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     data_json = Column(JSON, nullable=False)

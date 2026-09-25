@@ -64,3 +64,79 @@ async def get_case_study(
         "markdown_content": record.markdown_content,
         "created_at": record.created_at.isoformat() if record.created_at else None
     }
+
+@router.get("/export/pdf", summary="Export the case study as a formatted PDF file")
+async def export_case_study_pdf(
+    project_id: str,
+    case_study_repo: CaseStudyRepository = Depends(get_case_study_repo)
+):
+    import re
+    from fastapi.responses import StreamingResponse
+    from app.services.case_study_exporter import CaseStudyExporter
+
+    record = await case_study_repo.get_case_study(project_id)
+    if not record or not record.markdown_content:
+        raise HTTPException(status_code=404, detail="Case study not found for this project.")
+
+    pdf_buffer = CaseStudyExporter.export_to_pdf(record.title or "Case_Study", record.markdown_content)
+    clean_name = re.sub(r"[^\w\-_]+", "_", (record.title or "Case_Study")).strip("_")
+
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{clean_name}.pdf"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
+
+@router.get("/export/docx", summary="Export the case study as a formatted Word (.docx) file")
+async def export_case_study_docx(
+    project_id: str,
+    case_study_repo: CaseStudyRepository = Depends(get_case_study_repo)
+):
+    import re
+    from fastapi.responses import StreamingResponse
+    from app.services.case_study_exporter import CaseStudyExporter
+
+    record = await case_study_repo.get_case_study(project_id)
+    if not record or not record.markdown_content:
+        raise HTTPException(status_code=404, detail="Case study not found for this project.")
+
+    docx_buffer = CaseStudyExporter.export_to_docx(record.title or "Case_Study", record.markdown_content)
+    clean_name = re.sub(r"[^\w\-_]+", "_", (record.title or "Case_Study")).strip("_")
+
+    return StreamingResponse(
+        docx_buffer,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{clean_name}.docx"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
+
+@router.get("/export/md", summary="Export the raw Markdown case study")
+async def export_case_study_markdown(
+    project_id: str,
+    case_study_repo: CaseStudyRepository = Depends(get_case_study_repo)
+):
+    import io
+    import re
+    from fastapi.responses import StreamingResponse
+
+    record = await case_study_repo.get_case_study(project_id)
+    if not record or not record.markdown_content:
+        raise HTTPException(status_code=404, detail="Case study not found for this project.")
+
+    md_buffer = io.BytesIO(record.markdown_content.encode("utf-8"))
+    clean_name = re.sub(r"[^\w\-_]+", "_", (record.title or "Case_Study")).strip("_")
+
+    return StreamingResponse(
+        md_buffer,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{clean_name}.md"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
+
