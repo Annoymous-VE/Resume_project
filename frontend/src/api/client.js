@@ -1,4 +1,27 @@
-const API_BASE = "http://localhost:8000/api";
+const DEPLOYED_BACKEND_URL = "https://resume-project-osw9.onrender.com";
+const LOCAL_BACKEND_URL = "http://localhost:8000";
+
+export function getApiBase() {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && typeof envUrl === "string" && envUrl.trim()) {
+    const clean = envUrl.trim().replace(/\/+$/, "");
+    return clean.endsWith("/api") ? clean : `${clean}/api`;
+  }
+
+  // If running in browser on localhost / 127.0.0.1, connect to local backend
+  if (
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1")
+  ) {
+    return `${LOCAL_BACKEND_URL}/api`;
+  }
+
+  // Deployed production environment (Vercel, etc.)
+  return `${DEPLOYED_BACKEND_URL}/api`;
+}
+
+export const API_BASE = getApiBase();
 
 export async function uploadResume(file) {
   const formData = new FormData();

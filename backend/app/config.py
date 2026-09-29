@@ -16,6 +16,25 @@ load_dotenv(PROJECT_ROOT / ".env")
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
+def _get_cors_origins() -> list[str]:
+    origins = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+        "https://resume-project-sooty-eta.vercel.app",
+        "https://resume-project-osw9.onrender.com",
+    ]
+    custom = os.getenv("CORS_ORIGINS", "")
+    if custom:
+        for item in custom.split(","):
+            cleaned = item.strip()
+            if cleaned and cleaned not in origins:
+                origins.append(cleaned)
+    return origins
+
 class Settings(BaseModel):
     PROJECT_NAME: str = "Resume-to-Technical-Case-Study System"
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{STORAGE_DIR / 'app.db'}")
@@ -30,4 +49,8 @@ class Settings(BaseModel):
     # Interview defaults (7 rounds max guarantees high efficiency without infinite loops)
     MAX_INTERVIEW_ROUNDS: int = int(os.getenv("MAX_INTERVIEW_ROUNDS", "7"))
 
+    # CORS settings
+    CORS_ORIGINS: list[str] = _get_cors_origins()
+
 settings = Settings()
+

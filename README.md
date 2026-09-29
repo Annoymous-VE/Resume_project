@@ -2,6 +2,12 @@
 
 An AI-orchestrated, backend-first system that ingests arbitrary resumes (PDF, DOCX, TXT), detects technical engineering projects without template constraints, conducts an adaptive interview to fill gaps, tracks project knowledge with provenance, and generates high-fidelity technical case studies.
 
+## Deployed Environments
+
+- **Frontend**: [https://resume-project-sooty-eta.vercel.app/](https://resume-project-sooty-eta.vercel.app/)
+- **Backend API**: [https://resume-project-osw9.onrender.com/](https://resume-project-osw9.onrender.com/)
+- **Backend Docs**: [https://resume-project-osw9.onrender.com/docs](https://resume-project-osw9.onrender.com/docs)
+
 ## Project Structure
 
 ```text
