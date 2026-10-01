@@ -113,3 +113,25 @@ export function getCaseStudyExportUrl(projectId, format) {
   return `${API_BASE}/projects/${projectId}/case-study/export/${format}`;
 }
 
+export async function checkHealth() {
+  try {
+    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return { ok: false };
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function fetchResumeView(resumeId) {
+  const res = await fetch(`${API_BASE}/resumes/${resumeId}/view`);
+  if (!res.ok) throw new Error("Failed to load resume view link.");
+  return res.json();
+}
+
+export function getResumeDownloadUrl(resumeId) {
+  return `${API_BASE}/resumes/${resumeId}/download`;
+}
+
+

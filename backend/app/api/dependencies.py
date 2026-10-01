@@ -37,3 +37,10 @@ def get_interview_engine(llm: BaseLLMClient = Depends(get_llm)) -> InterviewEngi
 
 def get_case_study_generator(llm: BaseLLMClient = Depends(get_llm)) -> CaseStudyGenerator:
     return CaseStudyGenerator(llm)
+
+from app.services.storage_service import create_storage_service, BaseStorageService
+
+def get_storage_service() -> BaseStorageService:
+    return create_storage_service()
+
+

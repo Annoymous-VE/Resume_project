@@ -35,9 +35,35 @@ def _get_cors_origins() -> list[str]:
                 origins.append(cleaned)
     return origins
 
+def _normalize_database_url(url: str) -> str:
+    url = url.strip()
+    if not url:
+        return f"sqlite+aiosqlite:///{STORAGE_DIR / 'app.db'}"
+    
+    # Handle postgres / postgresql prefix for async SQLAlchemy
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    
+    # Normalize sslmode for asyncpg compatibility (asyncpg uses ssl=...)
+    if "+asyncpg" in url and "sslmode=" in url:
+        url = (
+            url.replace("sslmode=require", "ssl=require")
+               .replace("sslmode=prefer", "ssl=prefer")
+               .replace("sslmode=verify-full", "ssl=require")
+               .replace("sslmode=verify-ca", "ssl=require")
+        )
+    return url
+
 class Settings(BaseModel):
     PROJECT_NAME: str = "Resume-to-Technical-Case-Study System"
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{STORAGE_DIR / 'app.db'}")
+    DATABASE_URL: str = _normalize_database_url(os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{STORAGE_DIR / 'app.db'}"))
+    
+    # Supabase Settings (for PostgreSQL DB & Object Storage)
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "").strip()  # service_role or anon key
+    SUPABASE_BUCKET_NAME: str = os.getenv("SUPABASE_BUCKET_NAME", "resumes").strip()
     
     # LLM Settings
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "mock").strip()  # "gemini", "openai", or "mock"

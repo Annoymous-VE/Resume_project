@@ -7,12 +7,24 @@ class ProjectRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create_resume(self, filename: str, file_path: str, file_type: str, raw_structure: dict) -> Resume:
+    async def create_resume(
+        self,
+        filename: str,
+        file_path: str,
+        file_type: str,
+        raw_structure: dict,
+        storage_key: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        file_url: Optional[str] = None
+    ) -> Resume:
         resume = Resume(
             filename=filename,
             file_path=file_path,
             file_type=file_type,
-            raw_structure=raw_structure
+            raw_structure=raw_structure,
+            storage_key=storage_key,
+            mime_type=mime_type or "application/pdf",
+            file_url=file_url
         )
         self.db.add(resume)
         await self.db.flush()

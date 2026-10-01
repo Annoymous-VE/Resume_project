@@ -168,3 +168,39 @@ async def test_create_custom_project():
         assert start_data["status"] == "in_progress"
         assert start_data["current_question"] is not None
 
+@pytest.mark.asyncio
+async def test_resume_storage_view_and_download():
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        content = b"%PDF-1.4 Mock resume content for cloud storage test"
+        files = {"file": ("cloud_resume.pdf", io.BytesIO(content), "application/pdf")}
+        upload_res = await client.post("/api/resumes", files=files)
+        assert upload_res.status_code == 200
+        data = upload_res.json()
+        resume_id = data["resume_id"]
+        assert "storage_key" in data
+        assert "view_url" in data
+
+        # Test view endpoint
+        view_res = await client.get(f"/api/resumes/{resume_id}/view")
+        assert view_res.status_code == 200
+        view_data = view_res.json()
+        assert view_data["resume_id"] == resume_id
+        assert view_data["filename"] == "cloud_resume.pdf"
+        assert view_data["view_url"] is not None
+
+        # Test download endpoint
+        dl_res = await client.get(f"/api/resumes/{resume_id}/download")
+        assert dl_res.status_code == 200
+        assert dl_res.content == content
+        assert "attachment" in dl_res.headers["content-disposition"]
+
+        # Test raw inline stream endpoint (for local view)
+        raw_res = await client.get(f"/api/resumes/raw/{data['storage_key']}")
+        assert raw_res.status_code == 200
+        assert raw_res.content == content
+        assert "inline" in raw_res.headers["content-disposition"]
+
+
+

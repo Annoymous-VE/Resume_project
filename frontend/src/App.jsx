@@ -6,8 +6,12 @@ import {
   submitAnswer,
   continueInterview,
   generateCaseStudy,
-  getCaseStudyExportUrl
+  getCaseStudyExportUrl,
+  fetchResumeView,
+  getResumeDownloadUrl,
+  checkHealth
 } from "./api/client";
+import LandingPage from "./LandingPage";
 
 function renderInline(text) {
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
@@ -148,6 +152,155 @@ function StepperBar({ currentStep }) {
   );
 }
 
+function ResumeViewerModal({ resumeId, fallbackFilename, fallbackViewUrl, onClose }) {
+  const [viewData, setViewData] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!resumeId) return;
+    let active = true;
+    fetchResumeView(resumeId)
+      .then((data) => {
+        if (active) setViewData(data);
+      })
+      .catch((err) => {
+        if (!active) return;
+        if (fallbackViewUrl) {
+          setViewData({
+            filename: fallbackFilename || "Resume Document",
+            view_url: fallbackViewUrl,
+            file_type: fallbackFilename?.endsWith(".pdf") ? "pdf" : "other"
+          });
+        } else {
+          setError(err.message);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [resumeId, fallbackFilename, fallbackViewUrl]);
+
+  const loading = !viewData && !error;
+  const activeUrl = viewData?.view_url || fallbackViewUrl;
+  const isPdf = viewData?.file_type === "pdf" || (!viewData?.file_type && fallbackFilename?.endsWith(".pdf"));
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-content modal-large"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: "850px",
+          width: "92%",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
+          background: "#0f172a",
+          border: "1px solid #334155",
+          borderRadius: "12px",
+          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.6)"
+        }}
+      >
+        <div
+          className="modal-header"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderBottom: "1px solid #1e293b",
+            padding: "1rem 1.25rem"
+          }}
+        >
+          <div>
+            <h3 style={{ margin: 0, fontSize: "1.15rem", color: "#f8fafc", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              📄 {viewData?.filename || fallbackFilename || "Uploaded Resume Document"}
+            </h3>
+            <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+              Cloud Stored Document • Zero Hallucination Reference
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+            {resumeId && (
+              <a
+                href={getResumeDownloadUrl(resumeId)}
+                download
+                className="btn btn-secondary"
+                style={{ padding: "0.4rem 0.8rem", fontSize: "0.82rem", textDecoration: "none" }}
+              >
+                ⬇ Download
+              </a>
+            )}
+            <button
+              className="btn-close"
+              onClick={onClose}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#94a3b8",
+                fontSize: "1.3rem",
+                cursor: "pointer",
+                padding: "0.2rem 0.5rem"
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div className="modal-body" style={{ flex: 1, overflowY: "auto", padding: "1rem" }}>
+          {loading ? (
+            <div style={{ padding: "4rem", textAlign: "center", color: "#94a3b8" }}>
+              <span className="spinner" style={{ marginRight: "0.6rem" }} />
+              Connecting to secure document storage...
+            </div>
+          ) : error ? (
+            <div style={{ padding: "3rem", textAlign: "center", color: "#f87171" }}>
+              <p>Unable to load document preview: {error}</p>
+              {resumeId && (
+                <a href={getResumeDownloadUrl(resumeId)} download className="btn btn-secondary" style={{ marginTop: "1rem" }}>
+                  Download Document Directly
+                </a>
+              )}
+            </div>
+          ) : isPdf && activeUrl ? (
+            <iframe
+              src={activeUrl}
+              title="Resume Preview"
+              width="100%"
+              height="580px"
+              style={{
+                border: "1px solid #1e293b",
+                borderRadius: "8px",
+                background: "#1e293b"
+              }}
+            />
+          ) : (
+            <div style={{ padding: "3.5rem 1.5rem", textAlign: "center", background: "#1e293b", borderRadius: "8px" }}>
+              <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>📁</div>
+              <h4 style={{ margin: "0 0 0.5rem 0", color: "#f8fafc", fontSize: "1.1rem" }}>
+                {viewData?.filename || fallbackFilename}
+              </h4>
+              <p style={{ color: "#94a3b8", fontSize: "0.9rem", maxWidth: "460px", margin: "0 auto 1.5rem auto" }}>
+                This file format is stored in original fidelity. Click below to download and inspect.
+              </p>
+              {resumeId && (
+                <a
+                  href={getResumeDownloadUrl(resumeId)}
+                  download
+                  className="btn"
+                  style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", textDecoration: "none" }}
+                >
+                  ⬇ Download Original File
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [file, setFile] = useState(null);
   const [resumeId, setResumeId] = useState(null);
@@ -161,6 +314,12 @@ export default function App() {
   const [caseStudy, setCaseStudy] = useState(null);
   const [error, setError] = useState(null);
   const [showRawMarkdown, setShowRawMarkdown] = useState(false);
+  
+  // Storage and document viewing state
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeFilename, setResumeFilename] = useState("");
+  const [resumeViewUrl, setResumeViewUrl] = useState(null);
+  const [backendHealth, setBackendHealth] = useState({ checked: false, online: true });
 
   // States for manual unlisted project creation
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
@@ -177,6 +336,12 @@ export default function App() {
 
   const chatEndRef = useRef(null);
   const caseStudyRef = useRef(null);
+
+  useEffect(() => {
+    checkHealth().then((res) => {
+      setBackendHealth({ checked: true, online: res.ok });
+    });
+  }, []);
 
   useEffect(() => {
     if (chatEndRef.current) {
@@ -243,6 +408,8 @@ export default function App() {
     try {
       const data = await uploadResume(file);
       setResumeId(data.resume_id || null);
+      setResumeFilename(data.filename || file.name);
+      setResumeViewUrl(data.view_url || null);
       setProjects(data.projects || []);
       if (data.projects && data.projects.length > 0) {
         setSelectedProject(data.projects[0]);
@@ -464,6 +631,25 @@ export default function App() {
 
       {/* ─── Step Content Area ─── */}
       <div className="step-content">
+        {/* Cloud Connection / Cold-start Banner */}
+        {!backendHealth.online && backendHealth.checked && (
+          <div style={{
+            background: "rgba(234, 179, 8, 0.12)",
+            border: "1px solid rgba(234, 179, 8, 0.35)",
+            color: "#fde047",
+            padding: "0.6rem 1rem",
+            borderRadius: "8px",
+            marginBottom: "1rem",
+            fontSize: "0.85rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem"
+          }}>
+            <span>⚡</span>
+            <span>Render backend may be waking up from sleep. The first request may take ~20–30 seconds.</span>
+          </div>
+        )}
+
         {/* Global Error Banner */}
         {error && (
           <div className="step-error-banner">
@@ -478,7 +664,7 @@ export default function App() {
             Step 1: Upload Resume
             ═══════════════════════════════════════════ */}
         {currentStep === 1 && (
-          <div className="step-panel step-upload">
+          <LandingPage>
             <div className="step-card-centered">
               <div className="step-icon-ring">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -544,7 +730,7 @@ export default function App() {
                 </div>
               </form>
             </div>
-          </div>
+          </LandingPage>
         )}
 
         {/* ═══════════════════════════════════════════
@@ -556,14 +742,26 @@ export default function App() {
               <button className="btn-back" onClick={() => goBackToStep(1)}>
                 ← Back to Upload
               </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={handleOpenAddProjectModal}
-                style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
-              >
-                <span style={{ fontSize: "1.1rem", lineHeight: 1 }}>+</span> Add Unlisted Project
-              </button>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                {resumeId && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setShowResumeModal(true)}
+                    style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+                  >
+                    <span>📄</span> View Uploaded Document
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleOpenAddProjectModal}
+                  style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+                >
+                  <span style={{ fontSize: "1.1rem", lineHeight: 1 }}>+</span> Add Unlisted Project
+                </button>
+              </div>
             </div>
 
             <div className="step-projects-header">
@@ -1177,6 +1375,15 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+
+      {showResumeModal && (
+        <ResumeViewerModal
+          resumeId={resumeId}
+          fallbackFilename={resumeFilename}
+          fallbackViewUrl={resumeViewUrl}
+          onClose={() => setShowResumeModal(false)}
+        />
       )}
     </div>
   );

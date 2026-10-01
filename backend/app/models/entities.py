@@ -17,6 +17,9 @@ class Resume(Base):
     filename = Column(String(255), nullable=False)
     file_path = Column(String(1024), nullable=False)
     file_type = Column(String(50), nullable=False)
+    storage_key = Column(String(1024), nullable=True)
+    mime_type = Column(String(100), default="application/pdf")
+    file_url = Column(String(2048), nullable=True)
     raw_structure = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
