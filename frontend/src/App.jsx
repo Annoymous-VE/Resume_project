@@ -330,8 +330,8 @@ export default function App() {
   const handleUpload = async (e) => {
     e.preventDefault();
     if (!file) return;
-    if (!user) {
-      setShowAuthModal(true);
+    if (!currentUser) {
+      handleOpenAuth("login");
       setError("Please sign in or create an account to upload your resume.");
       return;
     }
