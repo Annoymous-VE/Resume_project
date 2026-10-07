@@ -230,17 +230,39 @@ export default function App() {
     setIsAuthModalOpen(false);
   };
 
+  const resetWizardState = () => {
+    setFile(null);
+    setResumeId(null);
+    setProjects([]);
+    setSelectedProject(null);
+    setInterviewSession(null);
+    setAnswerInput("");
+    setPendingAnswer(null);
+    setCaseStudy(null);
+    setError(null);
+    setActiveVariant("technical");
+    setCaseStudiesMap({ technical: null, client_brochure: null });
+    setIsCaseStudyStep(false);
+    setGeneratingVariant(null);
+    setLoadingVariant(false);
+    setShowAddProjectModal(false);
+    setViewMode("wizard");
+  };
+
   const handleAuthSuccess = (user) => {
+    resetWizardState();
     setCurrentUser(user);
+    setIsAuthModalOpen(false);
   };
 
   const handleLogout = () => {
     logoutUser();
+    resetWizardState();
     setCurrentUser(null);
   };
 
   const handleResetToHome = () => {
-    goBackToStep(1);
+    resetWizardState();
   };
 
   const handleDashboardSelectInterview = async (proj) => {
@@ -274,8 +296,7 @@ export default function App() {
   };
 
   const handleDashboardStartNewUpload = () => {
-    handleResetToHome();
-    setViewMode("wizard");
+    resetWizardState();
   };
 
   /* ─── Derived wizard step ─── */
@@ -289,11 +310,7 @@ export default function App() {
 
   const goBackToStep = (step) => {
     if (step === 1) {
-      setIsCaseStudyStep(false);
-      setCaseStudy(null);
-      setCaseStudiesMap({ technical: null, client_brochure: null });
-      setInterviewSession(null);
-      setSelectedProject(null);
+      resetWizardState();
     } else if (step === 2) {
       setIsCaseStudyStep(false);
       setCaseStudy(null);
