@@ -231,17 +231,28 @@ body {
 /* ═══════════════════════════════════════════
    Step 1: Upload
    ═══════════════════════════════════════════ */
-.step-upload {
+.step-upload,
+.step-panel.step-card-centered-wrap,
+.step-card-centered-wrap {
+  flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: calc(100vh - var(--stepper-height) - 4rem);
+  min-height: calc(85vh - 72px);
+  padding: 3rem 1.5rem 5rem;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .step-card-centered {
-  max-width: 520px;
+  max-width: 540px;
   width: 100%;
+  margin: 0 auto;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .step-icon-ring {
@@ -269,6 +280,7 @@ body {
   letter-spacing: -0.03em;
   color: #fff;
   margin: 0 0 0.5rem;
+  text-align: center;
 }
 
 .step-desc {
@@ -276,6 +288,7 @@ body {
   font-size: 0.92rem;
   margin: 0 0 1.75rem;
   line-height: 1.55;
+  text-align: center;
 }
 
 /* ─── File Drop Zone ─── */
@@ -284,6 +297,7 @@ body {
   flex-direction: column;
   gap: 1.25rem;
   align-items: center;
+  width: 100%;
 }
 
 .file-drop-zone {
