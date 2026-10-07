@@ -428,6 +428,9 @@ export default function App() {
 
       setProjects((prev) => [newProject, ...prev]);
       setSelectedProject(newProject);
+      if (currentStep === 1) {
+        setCurrentStep(2);
+      }
       setShowAddProjectModal(false);
     } catch (err) {
       setAddProjectError(err.message || "Failed to create custom project.");
@@ -1424,7 +1427,7 @@ export default function App() {
               </button>
             </div>
 
-            <form onSubmit={handleAddProjectSubmit}>
+            <form onSubmit={handleAddProjectSubmit} className="modal-form">
               <div className="modal-body">
                 {addProjectError && (
                   <div style={{
@@ -1567,7 +1570,14 @@ export default function App() {
                   className="btn"
                   disabled={addingProject}
                 >
-                  {addingProject ? "Adding Project..." : "Save & Add Project"}
+                  {addingProject ? (
+                    <>
+                      <span className="spinner" />
+                      Saving Project...
+                    </>
+                  ) : (
+                    "Save & Add Project"
+                  )}
                 </button>
               </div>
             </form>

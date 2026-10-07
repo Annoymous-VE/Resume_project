@@ -1694,7 +1694,7 @@ pre {
   border-radius: var(--radius-xl);
   width: 100%;
   max-width: 620px;
-  max-height: 90vh;
+  max-height: min(90vh, 760px);
   display: flex;
   flex-direction: column;
   box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04), 0 0 80px rgba(14, 165, 233, 0.06);
@@ -1714,6 +1714,7 @@ pre {
   justify-content: space-between;
   align-items: flex-start;
   background: var(--bg-secondary);
+  flex-shrink: 0;
 }
 
 .modal-close-btn {
@@ -1733,19 +1734,50 @@ pre {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.modal-form,
+.modal-dialog > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .modal-body {
   padding: 1.5rem;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+.modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
 }
 
 .modal-footer {
   padding: 1rem 1.5rem;
-  background: rgba(8, 13, 26, 0.5);
+  background: rgba(8, 13, 26, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
+  flex-shrink: 0;
 }
 
 .form-group {
