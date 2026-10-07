@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 
-export default function LandingPage({ children }) {
+export default function LandingPage({ onGetStarted }) {
   const revealRefs = useRef([]);
 
   useEffect(() => {
@@ -27,10 +27,6 @@ export default function LandingPage({ children }) {
     if (el && !revealRefs.current.includes(el)) {
       revealRefs.current.push(el);
     }
-  };
-
-  const scrollToGetStarted = () => {
-    document.getElementById("get-started")?.scrollIntoView({ behavior: "smooth" });
   };
 
   return (
@@ -63,7 +59,7 @@ export default function LandingPage({ children }) {
           <div className="landing-hero-actions">
             <button
               className="landing-hero-cta"
-              onClick={scrollToGetStarted}
+              onClick={onGetStarted}
               type="button"
             >
               Get Started — It's Free
@@ -173,7 +169,7 @@ export default function LandingPage({ children }) {
       </section>
 
       {/* ═══════════════════════════════════════════
-          Get Started — Existing Upload Form
+          Get Started — Call to Action
           ═══════════════════════════════════════════ */}
       <section
         className="landing-section landing-get-started"
@@ -187,11 +183,32 @@ export default function LandingPage({ children }) {
               Ready to Build Your Case Study?
             </h2>
             <p className="landing-section-desc">
-              Upload your resume below and let our AI do the heavy lifting. No
-              account needed.
+              Create your free account or sign in to upload your resume and begin your adaptive technical interview.
             </p>
+            <div style={{ marginTop: "2rem" }}>
+              <button
+                className="landing-hero-cta"
+                onClick={onGetStarted}
+                type="button"
+                style={{ margin: "0 auto" }}
+              >
+                Sign In to Upload Resume
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M5 12h14" />
+                  <path d="m12 5 7 7-7 7" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <div className="landing-upload-wrapper">{children}</div>
         </div>
       </section>
 

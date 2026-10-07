@@ -43,33 +43,35 @@ export default function Navbar({
           <span className="brand-badge">AI Interviewer</span>
         </div>
 
-        {/* Center Navigation Links */}
-        <nav className="navbar-nav-links">
-          <button
-            type="button"
-            className={`navbar-nav-item ${viewMode === "wizard" ? "active" : ""}`}
-            onClick={() => onViewChange && onViewChange("wizard")}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-            <span>Interview Wizard</span>
-          </button>
+        {/* Center Navigation Links (Visible only when logged in) */}
+        {currentUser && (
+          <nav className="navbar-nav-links">
+            <button
+              type="button"
+              className={`navbar-nav-item ${viewMode === "wizard" ? "active" : ""}`}
+              onClick={() => onViewChange && onViewChange("wizard")}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+              </svg>
+              <span>Interview Wizard</span>
+            </button>
 
-          <button
-            type="button"
-            className={`navbar-nav-item ${viewMode === "dashboard" ? "active" : ""}`}
-            onClick={() => onViewChange && onViewChange("dashboard")}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="7" height="7" />
-              <rect x="14" y="3" width="7" height="7" />
-              <rect x="14" y="14" width="7" height="7" />
-              <rect x="3" y="14" width="7" height="7" />
-            </svg>
-            <span>Dashboard</span>
-          </button>
-        </nav>
+            <button
+              type="button"
+              className={`navbar-nav-item ${viewMode === "dashboard" ? "active" : ""}`}
+              onClick={() => onViewChange && onViewChange("dashboard")}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+              </svg>
+              <span>Dashboard</span>
+            </button>
+          </nav>
+        )}
 
         {/* Right Actions */}
         <div className="app-navbar-actions">

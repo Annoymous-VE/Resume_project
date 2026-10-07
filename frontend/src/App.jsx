@@ -660,7 +660,11 @@ export default function App() {
         onViewChange={setViewMode}
       />
 
-      {viewMode === "dashboard" ? (
+      {!currentUser ? (
+        <main className="landing-main-wrapper">
+          <LandingPage onGetStarted={() => handleOpenAuth("register")} />
+        </main>
+      ) : viewMode === "dashboard" ? (
         <main className="dashboard-main-wrapper">
           <DashboardView
             currentUser={currentUser}
@@ -685,10 +689,10 @@ export default function App() {
         )}
 
         {/* ═══════════════════════════════════════════
-            Step 1: Upload Resume
+            Step 1: Upload Resume (Shown when Logged In)
             ═══════════════════════════════════════════ */}
         {currentStep === 1 && (
-          <LandingPage>
+          <div className="step-panel step-card-centered-wrap">
             <div className="step-card-centered">
               <div className="step-icon-ring">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -700,7 +704,7 @@ export default function App() {
               </div>
               <h2 className="step-title">Upload Your Resume</h2>
               <p className="step-desc">
-                Upload any PDF, DOCX, or text resume. The system uses layout-aware parsing and semantic extraction to detect your technical projects.
+                Upload your PDF, DOCX, or text resume. The system uses layout-aware parsing and semantic extraction to detect your technical projects.
               </p>
 
               <form onSubmit={handleUpload} className="upload-form">
@@ -754,7 +758,7 @@ export default function App() {
                 </div>
               </form>
             </div>
-          </LandingPage>
+          </div>
         )}
 
         {/* ═══════════════════════════════════════════
