@@ -50,7 +50,7 @@ body {
     radial-gradient(ellipse 60% 40% at 80% 80%, rgba(52, 211, 153, 0.04) 0%, transparent 50%);
   background-attachment: fixed;
   min-height: 100vh;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 /* ═══════════════════════════════════════════
@@ -2413,11 +2413,12 @@ pre {
   left: 0;
   right: 0;
   height: 64px;
-  background: rgba(8, 13, 26, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: rgba(8, 13, 26, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border-subtle);
-  z-index: 100;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  z-index: 1000;
   display: flex;
   align-items: center;
 }

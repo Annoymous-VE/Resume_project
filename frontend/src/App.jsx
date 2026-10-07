@@ -672,9 +672,6 @@ export default function App() {
         </main>
       ) : (
         <>
-          {/* ─── Fixed Stepper Bar ─── */}
-          <StepperBar currentStep={currentStep} />
-
           {/* ─── Step Content Area ─── */}
           <div className="step-content">
         {/* Global Error Banner */}
