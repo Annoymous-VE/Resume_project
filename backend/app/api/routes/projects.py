@@ -1,10 +1,12 @@
 import uuid
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.models.entities import User
 from app.api.dependencies import (
     get_project_repo,
     get_knowledge_manager,
+    get_optional_current_user,
     ProjectRepository,
     KnowledgeManager
 )
@@ -25,6 +27,7 @@ class ProjectCreateRequest(BaseModel):
 @router.post("", summary="Add an unlisted or custom project manually")
 async def create_custom_project(
     req: ProjectCreateRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     project_repo: ProjectRepository = Depends(get_project_repo),
     knowledge_manager: KnowledgeManager = Depends(get_knowledge_manager)
 ):
@@ -44,14 +47,16 @@ async def create_custom_project(
     cleaned_outcomes = [o.strip() for o in (req.outcomes or []) if o.strip()]
     cleaned_links = [l.strip() for l in (req.links or []) if l.strip()]
 
+    user_id = current_user.id if current_user else None
+
     resume_id = req.resume_id
     if resume_id:
-        existing_resume = await project_repo.get_resume(resume_id)
+        existing_resume = await project_repo.get_resume(resume_id, user_id=user_id)
         if not existing_resume:
             resume_id = None
     
     if not resume_id:
-        latest = await project_repo.get_latest_resume()
+        latest = await project_repo.get_latest_resume(user_id=user_id)
         if latest:
             resume_id = latest.id
         else:
@@ -59,7 +64,8 @@ async def create_custom_project(
                 filename="Manual Projects",
                 file_path="",
                 file_type="manual",
-                raw_structure={}
+                raw_structure={},
+                user_id=user_id
             )
             resume_id = default_resume.id
 
@@ -82,7 +88,8 @@ async def create_custom_project(
         description=ep.description,
         data_json=ep.model_dump(),
         confidence=ep.confidence,
-        id=proj_id
+        id=proj_id,
+        user_id=user_id
     )
 
     init_knowledge = knowledge_manager.initialize_knowledge(ep)
@@ -103,8 +110,12 @@ async def create_custom_project(
 
 
 @router.get("", summary="List all extracted projects")
-async def list_projects(project_repo: ProjectRepository = Depends(get_project_repo)):
-    projects = await project_repo.get_all_projects()
+async def list_projects(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    project_repo: ProjectRepository = Depends(get_project_repo)
+):
+    user_id = current_user.id if current_user else None
+    projects = await project_repo.get_all_projects(user_id=user_id)
     return [
         {
             "id": p.id,
@@ -119,10 +130,21 @@ async def list_projects(project_repo: ProjectRepository = Depends(get_project_re
     ]
 
 @router.get("/{project_id}", summary="Get project details")
-async def get_project(project_id: str, project_repo: ProjectRepository = Depends(get_project_repo)):
+async def get_project(
+    project_id: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    project_repo: ProjectRepository = Depends(get_project_repo)
+):
     proj = await project_repo.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found.")
+    
+    if proj.user_id and current_user and proj.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: this project belongs to another account."
+        )
+
     return {
         "id": proj.id,
         "resume_id": proj.resume_id,
@@ -136,9 +158,20 @@ async def get_project(project_id: str, project_repo: ProjectRepository = Depends
 @router.get("/{project_id}/knowledge", summary="Get structured project knowledge object and coverage")
 async def get_project_knowledge(
     project_id: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     project_repo: ProjectRepository = Depends(get_project_repo),
     knowledge_manager: KnowledgeManager = Depends(get_knowledge_manager)
 ):
+    proj = await project_repo.get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    if proj.user_id and current_user and proj.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: this project belongs to another account."
+        )
+
     record = await project_repo.get_knowledge(project_id)
     if not record:
         raise HTTPException(status_code=404, detail="Project knowledge not found.")

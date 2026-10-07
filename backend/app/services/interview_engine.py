@@ -122,6 +122,117 @@ class InterviewEngine:
         }
         return clean in skip_phrases or clean.startswith("skip") or clean.startswith("let's skip")
 
+    @staticmethod
+    def is_dismissive_reply(text: str) -> bool:
+        """Detect whether the user provided a dismissive, superficial, or non-informative reply to an obstacle inquiry."""
+        if not text:
+            return True
+        clean = text.strip().lower().rstrip(".!?,")
+        dismissive_phrases = {
+            "everything went smoothly",
+            "everything went smooth",
+            "everything was smooth",
+            "everything went well",
+            "everything worked smoothly",
+            "everything worked fine",
+            "everything worked as expected",
+            "everything was fine",
+            "all went smoothly",
+            "all was smooth",
+            "went smoothly",
+            "smooth sailing",
+            "it was smooth",
+            "it was easy",
+            "it went smoothly",
+            "no issues",
+            "no issue",
+            "no problems",
+            "no problem",
+            "no challenges",
+            "no challenge",
+            "no obstacles",
+            "no obstacle",
+            "no bottlenecks",
+            "no bottleneck",
+            "no failure modes",
+            "no bugs",
+            "no blockers",
+            "no major issues",
+            "no major problems",
+            "no major challenges",
+            "no major obstacles",
+            "no major bottlenecks",
+            "no real issues",
+            "no real challenges",
+            "no real obstacles",
+            "no critical issues",
+            "none",
+            "none really",
+            "not really",
+            "nothing",
+            "nothing really",
+            "nothing special",
+            "nothing went wrong",
+            "nothing broke",
+            "there were no issues",
+            "there was no issue",
+            "there were no problems",
+            "there were no challenges",
+            "there were no obstacles",
+            "there was no problem",
+            "we had no issues",
+            "we faced no issues",
+            "we faced no problems",
+            "we didn't face any issues",
+            "we did not face any issues",
+            "didn't face any issues",
+            "we didn't have any issues",
+            "we did not have any issues",
+            "didn't have any issues",
+            "we didn't face any problems",
+            "didn't encounter any issues",
+            "did not encounter any issues",
+            "we didn't run into any issues",
+            "it was straightforward",
+            "pretty straightforward",
+            "very straightforward",
+            "fairly straightforward",
+            "n/a",
+            "na"
+        }
+        if clean in dismissive_phrases:
+            return True
+
+        dismissive_patterns = [
+            r"^(?:everything|it all|all of it)\s+(?:went|was|worked)\s+(?:smoothly|smooth|fine|great|well|as expected)",
+            r"^(?:there\s+were|there\s+was|we\s+had|we\s+faced)\s+no\s+(?:issues|problems|challenges|obstacles|bottlenecks|bugs|hurdles|blockers)",
+            r"^(?:did\s*n'?t|did\s+not|had\s+no)\s+(?:face|have|encounter|run\s+into)\s+(?:any|major|real)\s+(?:issues|problems|challenges|obstacles|bottlenecks)",
+            r"^no\s+(?:real|major|significant|particular|technical)\s+(?:issues|problems|challenges|obstacles|bottlenecks|hurdles|blockers)",
+            r"^(?:smooth\s+sailing|nothing\s+went\s+wrong|nothing\s+really|not\s+really\s+any|it\s+was\s+smooth)",
+        ]
+        for pattern in dismissive_patterns:
+            if re.search(pattern, clean):
+                return True
+
+        return False
+
+    def generate_obstacle_escalation_question(
+        self,
+        technologies: Optional[List[str]] = None,
+        round_num: int = 1
+    ) -> GeneratedQuestion:
+        """Generate category escalation follow-up when candidate gives a superficial/dismissive reply to obstacle inquiry."""
+        prompt_text = (
+            "Even well-designed architectures face constraints like API rate limits, "
+            "database locks, slow queries, or third-party integration bugs. Which of these did you experience?"
+        )
+        return GeneratedQuestion(
+            id=f"q_obstacle_escalation_{round_num}_{uuid.uuid4().hex[:6]}",
+            target_area="challenges",
+            question=prompt_text,
+            rationale="Escalates superficial response with concrete category prompts."
+        )
+
     async def generate_clarification_response(
         self,
         project_name: str,
@@ -178,13 +289,14 @@ class InterviewEngine:
                 f"(For example: User -> Web UI -> Backend -> Database). A quick high-level summary is plenty!"
             ),
             "challenges": (
-                f"All good! Basically, while developing {project_name}, what was the trickiest bug, "
-                f"performance bottleneck, tricky integration, or unexpected hurdle you had to solve? "
-                f"For instance, did you run into rate limits, data sync bugs, or slow queries? Any hurdle counts!"
+                f"All good! In real-world engineering, virtually no system is built without friction. "
+                f"What were the key obstacles, architectural bottlenecks, or failure modes you hit while building {project_name}? "
+                f"For instance, did you run into rate limits, data sync bugs, slow queries, or edge cases? Any real hurdle counts!"
             ),
             "solutions": (
-                f"Happy to clarify! How did you end up fixing or working around that technical hurdle? "
-                f"For example, did you rewrite a query, add caching, switch a library, or adjust system configuration?"
+                f"Happy to clarify! In real-world engineering, overcoming friction requires concrete technical intervention. "
+                f"How did you end up fixing or working around that technical hurdle? "
+                f"For example, what specific measures did you take—did you rewrite a query, add caching, switch a library, or adjust system configuration?"
             ),
             "tradeoffs": (
                 f"No worries! In engineering, every technical choice has pros and cons. "
@@ -262,6 +374,49 @@ class InterviewEngine:
             )
         ]
 
+    @classmethod
+    def has_concrete_obstacle(cls, knowledge: Optional[ProjectKnowledge], coverage: Optional[KnowledgeCoverage] = None) -> bool:
+        """Check whether at least one concrete obstacle/challenge has been gathered."""
+        if not knowledge:
+            return False
+        if any(bool(p and p.obstacle and p.obstacle.strip() and not cls.is_dismissive_reply(p.obstacle)) for p in (knowledge.obstacle_mitigations or [])):
+            return True
+        if any(bool(c and c.strip() and not cls.is_dismissive_reply(c)) for c in (knowledge.challenges or [])):
+            return True
+        if knowledge.evidence:
+            if any(e.category == "challenges" and len(e.fact.strip()) > 5 and not cls.is_dismissive_reply(e.fact) for e in knowledge.evidence):
+                return True
+        if coverage:
+            cov_dict = coverage.model_dump()
+            if cov_dict.get("challenges") in (CoverageLevel.PARTIAL.value, CoverageLevel.SUFFICIENT.value):
+                if knowledge.challenges and all(cls.is_dismissive_reply(c) for c in knowledge.challenges):
+                    return False
+                return True
+        return False
+
+    @classmethod
+    def has_concrete_mitigation(cls, knowledge: Optional[ProjectKnowledge], coverage: Optional[KnowledgeCoverage] = None) -> bool:
+        """Check whether at least one concrete mitigation/solution has been gathered."""
+        if not knowledge:
+            return False
+        if any(bool(p and p.measures_taken and len(p.measures_taken.strip()) > 5) for p in (knowledge.obstacle_mitigations or [])):
+            return True
+        if any(bool(s and s.strip()) for s in (knowledge.solutions or [])):
+            return True
+        if knowledge.evidence:
+            if any(e.category == "solutions" and len(e.fact.strip()) > 5 for e in knowledge.evidence):
+                return True
+        if coverage:
+            cov_dict = coverage.model_dump()
+            if cov_dict.get("solutions") in (CoverageLevel.PARTIAL.value, CoverageLevel.SUFFICIENT.value):
+                return True
+        return False
+
+    @classmethod
+    def has_obstacle_and_mitigation(cls, knowledge: Optional[ProjectKnowledge], coverage: Optional[KnowledgeCoverage] = None) -> bool:
+        """Check whether BOTH a concrete obstacle and its corresponding mitigation have been gathered."""
+        return cls.has_concrete_obstacle(knowledge, coverage) and cls.has_concrete_mitigation(knowledge, coverage)
+
     async def select_next_question(
         self,
         knowledge: ProjectKnowledge,
@@ -274,32 +429,45 @@ class InterviewEngine:
     ) -> FollowUpQuestionResult:
         """Analyze answer and select ONE high-value follow-up or stop."""
         
-        # Check stopping conditions
+        # Check stopping conditions & Mandatory Obstacle Phase-Gate
         cov_dict = coverage.model_dump()
         sufficient_count = sum(1 for a in self.AREA_PRIORITIES if cov_dict.get(a) == CoverageLevel.SUFFICIENT.value)
 
-        # 1. Max interview rounds reached (prevents interview from dragging on endlessly)
-        if current_round >= settings.MAX_INTERVIEW_ROUNDS:
+        has_obstacle = self.has_concrete_obstacle(knowledge, coverage)
+        has_mitigation = self.has_concrete_mitigation(knowledge, coverage)
+        obstacle_gate_passed = has_obstacle and has_mitigation
+
+        # Hard upper ceiling to prevent infinite loops if candidate continuously refuses to provide an obstacle
+        max_hard_ceiling = settings.MAX_INTERVIEW_ROUNDS + 2
+        if current_round >= max_hard_ceiling:
             return FollowUpQuestionResult(
                 has_next_question=False,
                 stop_reason="Maximum configured interview rounds reached.",
                 coverage_update={}
             )
 
-        # 2. Check if all 8 dimensions are SUFFICIENT
+        # 1. Check if all 8 dimensions are SUFFICIENT (and obstacle phase-gate passed)
         all_sufficient = all(cov_dict.get(a) == CoverageLevel.SUFFICIENT.value for a in self.AREA_PRIORITIES)
-        if all_sufficient:
+        if all_sufficient and obstacle_gate_passed:
             return FollowUpQuestionResult(
                 has_next_question=False,
                 stop_reason="All 8 technical dimensions sufficiently covered for an outstanding case study.",
                 coverage_update={}
             )
 
-        # 3. High completeness exit: if at least 7/8 dimensions are SUFFICIENT and we've gathered substantial depth
-        if sufficient_count >= 7 and current_round >= 5:
+        # 2. High completeness exit: if at least 7/8 dimensions are SUFFICIENT and we've gathered substantial depth
+        if sufficient_count >= 7 and current_round >= 5 and obstacle_gate_passed:
             return FollowUpQuestionResult(
                 has_next_question=False,
                 stop_reason="Comprehensive technical depth gathered across all key dimensions.",
+                coverage_update={}
+            )
+
+        # 3. Standard max interview rounds reached: allows stopping only if obstacle phase gate has passed
+        if current_round >= settings.MAX_INTERVIEW_ROUNDS and obstacle_gate_passed:
+            return FollowUpQuestionResult(
+                has_next_question=False,
+                stop_reason="Maximum configured interview rounds reached.",
                 coverage_update={}
             )
 
@@ -317,13 +485,27 @@ class InterviewEngine:
         }
 
         target_area = None
+
+        # MANDATORY OBSTACLE PHASE-GATE ENFORCEMENT:
+        # If early stopping conditions would have triggered OR after foundational context (current_round >= 3),
+        # prioritize enforcing the obstacle and mitigation phase gate.
+        need_obstacle = not has_obstacle and skip_area != "challenges"
+        need_mitigation = has_obstacle and not has_mitigation and skip_area != "solutions"
+
+        if (all_sufficient or sufficient_count >= 6 or current_round >= 3) and (need_obstacle or need_mitigation):
+            if need_obstacle:
+                target_area = "challenges"
+            elif need_mitigation:
+                target_area = "solutions"
+
         # First pass: find highest priority area that is UNKNOWN or PARTIAL and hasn't been asked yet
-        for area in self.AREA_PRIORITIES:
-            if skip_area and area == skip_area:
-                continue
-            if area not in asked_areas and cov_dict.get(area) in (CoverageLevel.UNKNOWN.value, CoverageLevel.PARTIAL.value):
-                target_area = area
-                break
+        if not target_area:
+            for area in self.AREA_PRIORITIES:
+                if skip_area and area == skip_area:
+                    continue
+                if area not in asked_areas and cov_dict.get(area) in (CoverageLevel.UNKNOWN.value, CoverageLevel.PARTIAL.value):
+                    target_area = area
+                    break
 
         # Second pass: if all unasked areas are exhausted, pick any remaining uncovered area not skipped
         if not target_area:
@@ -334,11 +516,32 @@ class InterviewEngine:
                     target_area = area
                     break
 
+        # Third pass: Phase-Gate final check
+        # If all uncovered areas are marked sufficient but obstacle gate is not passed,
+        # DO NOT STOP! Force query for the missing obstacle or mitigation.
         if not target_area:
+            if not has_obstacle and skip_area != "challenges":
+                target_area = "challenges"
+            elif not has_mitigation and skip_area != "solutions":
+                target_area = "solutions"
+            else:
+                return FollowUpQuestionResult(
+                    has_next_question=False,
+                    stop_reason="All technical dimensions sufficiently covered for case study.",
+                    coverage_update={}
+                )
+
+        # Fallback escalation for superficial answers:
+        # If targeting challenges and the candidate gave a dismissive reply (e.g. 'everything went smoothly'),
+        # automatically follow up with the category prompt.
+        if target_area == "challenges" and self.is_dismissive_reply(latest_answer):
             return FollowUpQuestionResult(
-                has_next_question=False,
-                stop_reason="All technical dimensions sufficiently covered for case study.",
-                coverage_update={}
+                has_next_question=True,
+                question=self.generate_obstacle_escalation_question(
+                    technologies=knowledge.technologies,
+                    round_num=current_round + 1
+                ),
+                coverage_update={"challenges": CoverageLevel.UNKNOWN}
             )
 
         # Prompt LLM for targeted follow-up
@@ -377,8 +580,8 @@ class InterviewEngine:
             "problem": f"What specific user pain point or technical bottleneck led to building {knowledge.project_name}, and why were existing tools inadequate?",
             "architecture": f"How does data flow end-to-end through {knowledge.project_name}, and what are the key architectural components connecting {tech_two}?",
             "technical_decisions": f"What was the main reason you chose {tech_two} over alternative tools, and what specific capability or constraint drove that decision?",
-            "challenges": f"While building with {tech_two}, what was the trickiest bug, rate-limit, or performance hurdle you ran into, and how did it manifest?",
-            "solutions": f"Specifically what technical mechanism, architecture tweak, or optimization did you use to resolve that hurdle with {tech_two}?",
+            "challenges": f"In real-world engineering, virtually no system is built without friction. What were the key obstacles, architectural bottlenecks, or failure modes you encountered while building {knowledge.project_name} with {tech_two}, and what specific measures did you take to overcome them?",
+            "solutions": f"In real-world engineering, overcoming friction requires concrete technical intervention. What specific architectural measures, algorithmic tweaks, or mitigations did you implement to overcome that obstacle with {tech_two}?",
             "tradeoffs": f"Every engineering choice involves trade-offs—what downsides, operational overhead, or limitations did you accept with {tech_two}?",
             "performance": f"Did you measure any latency, throughput, or scale metrics with {tech_two} (even ballpark estimates like ms or requests/sec)?",
             "impact": f"Once deployed, what concrete outcome, user adoption, or measurable business benefit did {knowledge.project_name} deliver?"

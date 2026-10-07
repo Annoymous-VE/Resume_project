@@ -15,9 +15,56 @@ from reportlab.platypus import (
     Paragraph,
     Spacer,
     HRFlowable,
-    KeepTogether
+    KeepTogether,
+    Table,
+    TableStyle
 )
 from reportlab.pdfgen import canvas
+
+class BrochureNumberedCanvas(canvas.Canvas):
+    """Canvas that computes total pages for 'Page X of Y' brochure footer with commercial branding."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_decorations(self, total_pages: int):
+        self.saveState()
+        # Header rule and text (on pages > 1)
+        if self._pageNumber > 1:
+            self.setFont("Helvetica-Bold", 7.5)
+            self.setFillColor(colors.HexColor("#0284C7"))
+            self.drawString(45, letter[1] - 32, "CLIENT SOLUTION OVERVIEW & VALUE PROPOSITION")
+            self.setFont("Helvetica", 7.5)
+            self.setFillColor(colors.HexColor("#64748B"))
+            self.drawRightString(letter[0] - 45, letter[1] - 32, "Executive Commercial Brief")
+            self.setStrokeColor(colors.HexColor("#E2E8F0"))
+            self.setLineWidth(0.5)
+            self.line(45, letter[1] - 36, letter[0] - 45, letter[1] - 36)
+
+        # Footer rule and text
+        self.setStrokeColor(colors.HexColor("#E2E8F0"))
+        self.setLineWidth(0.5)
+        self.line(45, 38, letter[0] - 45, 38)
+        
+        self.setFont("Helvetica", 8)
+        self.setFillColor(colors.HexColor("#64748B"))
+        self.drawString(45, 26, "Confidential • Commercial in Confidence • Solution Overview")
+        page_text = f"Page {self._pageNumber} of {total_pages}"
+        self.drawRightString(letter[0] - 45, 26, page_text)
+        self.restoreState()
+
 
 class NumberedCanvas(canvas.Canvas):
     """Canvas that computes total pages for 'Page X of Y' footer."""
@@ -87,7 +134,7 @@ class CaseStudyExporter:
                 paragraph.add_run(part)
 
     @classmethod
-    def export_to_docx(cls, title: str, markdown_content: str) -> io.BytesIO:
+    def export_to_docx(cls, title: str, markdown_content: str, variant_type: str = "technical") -> io.BytesIO:
         """Generate a professionally formatted Word DOCX document."""
         doc = Document()
 
@@ -113,7 +160,12 @@ class CaseStudyExporter:
         sub_p = doc.add_paragraph()
         sub_p.paragraph_format.space_before = Pt(0)
         sub_p.paragraph_format.space_after = Pt(18)
-        run_sub = sub_p.add_run("Deep-Dive Technical Architecture & Engineering Case Study")
+        sub_text = (
+            "Executive Solution Overview & Commercial Value Proposition"
+            if variant_type == "client_brochure"
+            else "Deep-Dive Technical Architecture & Engineering Case Study"
+        )
+        run_sub = sub_p.add_run(sub_text)
         run_sub.font.name = "Arial"
         run_sub.font.size = Pt(10.5)
         run_sub.font.italic = True
@@ -211,9 +263,264 @@ class CaseStudyExporter:
         buffer.seek(0)
         return buffer
 
+    @staticmethod
+    def _extract_brochure_metrics(markdown_content: str) -> List[dict]:
+        """Extract quantifiable metric callouts from brochure markdown for highlight cards."""
+        metrics = []
+        for line in markdown_content.splitlines():
+            clean = line.strip()
+            if not clean.startswith(("- ", "* ", "• ")):
+                continue
+            # Pattern 1: - **Category**: **Value** — Description
+            m1 = re.match(r"^[-*•]\s*\*\*(.*?)\*\*:\s*\*\*(.*?)\*\*\s*(?:[—–-]\s*(.*))?$", clean)
+            if m1:
+                lbl, val, desc = m1.group(1).strip(), m1.group(2).strip(), (m1.group(3) or "").strip()
+                metrics.append({"label": lbl, "value": val, "description": desc})
+                continue
+            # Pattern 2: - **Category**: Value — Description (where Value has numbers or stats)
+            m2 = re.match(r"^[-*•]\s*\*\*(.*?)\*\*:\s*([^—–-]+?)\s*(?:[—–-]\s*(.*))?$", clean)
+            if m2:
+                lbl, val, desc = m2.group(1).strip(), m2.group(2).strip(), (m2.group(3) or "").strip()
+                if any(c.isdigit() for c in val) or any(w in val.lower() for w in ["faster", "reduction", "%", "boost", "scale", "req/"]):
+                    metrics.append({"label": lbl, "value": val, "description": desc})
+        return metrics[:4]
+
     @classmethod
-    def export_to_pdf(cls, title: str, markdown_content: str) -> io.BytesIO:
+    def export_brochure_to_pdf(cls, title: str, markdown_content: str, key_metrics: Optional[List[dict]] = None) -> io.BytesIO:
+        """
+        Generate a dedicated 1-to-2 page marketing flyer/brochure PDF using ReportLab.
+        Features visual metric callout boxes, executive summary sidebars, and commercial styling.
+        """
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            leftMargin=45,
+            rightMargin=45,
+            topMargin=45,
+            bottomMargin=45
+        )
+
+        styles = getSampleStyleSheet()
+
+        eyebrow_style = ParagraphStyle(
+            'BrochureEyebrow',
+            parent=styles['Normal'],
+            fontName='Helvetica-Bold',
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#0284C7"),
+            spaceAfter=3
+        )
+
+        title_style = ParagraphStyle(
+            'BrochureTitle',
+            parent=styles['Normal'],
+            fontName='Helvetica-Bold',
+            fontSize=20,
+            leading=24,
+            textColor=colors.HexColor("#0F172A"),
+            spaceAfter=4
+        )
+
+        tagline_style = ParagraphStyle(
+            'BrochureTagline',
+            parent=styles['Normal'],
+            fontName='Helvetica-Oblique',
+            fontSize=10,
+            leading=13.5,
+            textColor=colors.HexColor("#475569"),
+            spaceAfter=10
+        )
+
+        h2_style = ParagraphStyle(
+            'BrochureH2',
+            parent=styles['Normal'],
+            fontName='Helvetica-Bold',
+            fontSize=11.5,
+            leading=15,
+            textColor=colors.HexColor("#0F172A"),
+            spaceBefore=10,
+            spaceAfter=4,
+            keepWithNext=True
+        )
+
+        h3_style = ParagraphStyle(
+            'BrochureH3',
+            parent=styles['Normal'],
+            fontName='Helvetica-Bold',
+            fontSize=10,
+            leading=13,
+            textColor=colors.HexColor("#0284C7"),
+            spaceBefore=8,
+            spaceAfter=3,
+            keepWithNext=True
+        )
+
+        body_style = ParagraphStyle(
+            'BrochureBody',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=9,
+            leading=13,
+            textColor=colors.HexColor("#334155"),
+            spaceAfter=4
+        )
+
+        bullet_style = ParagraphStyle(
+            'BrochureBullet',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=9,
+            leading=13,
+            textColor=colors.HexColor("#334155"),
+            leftIndent=14,
+            firstLineIndent=-8,
+            spaceAfter=3
+        )
+
+        summary_callout_style = ParagraphStyle(
+            'BrochureSummaryCallout',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=9.5,
+            leading=14,
+            textColor=colors.HexColor("#1E293B")
+        )
+
+        metric_card_style = ParagraphStyle(
+            'BrochureMetricCard',
+            parent=styles['Normal'],
+            alignment=1, # Center
+            leading=12
+        )
+
+        story = []
+
+        # 1. Header Banner
+        clean_title = re.sub(r"^#\s*", "", title).strip()
+        story.append(Paragraph("CLIENT SOLUTION BRIEF | BUSINESS IMPACT REPORT", eyebrow_style))
+        story.append(Paragraph(clean_title, title_style))
+
+        # Look for tagline in first few lines of markdown (*tagline* or _tagline_)
+        tagline = "Executive Solution Brief & Measurable Client Transformation"
+        lines = markdown_content.splitlines()
+        for l in lines[:5]:
+            clean_l = l.strip()
+            if clean_l.startswith("*") and clean_l.endswith("*") and len(clean_l) > 6:
+                tagline = clean_l.strip("*_ ")
+                break
+
+        story.append(Paragraph(tagline, tagline_style))
+        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#0284C7"), spaceAfter=8))
+
+        # 2. Visual Metric Callout Boxes
+        metrics = key_metrics or cls._extract_brochure_metrics(markdown_content)
+        if metrics:
+            printable_width = letter[0] - 90  # 522 pt
+            col_width = printable_width / len(metrics)
+            card_cells = []
+            for m in metrics:
+                val = m.get("value", "")
+                lbl = m.get("label", "")
+                desc = m.get("description", "")
+                cell_html = (
+                    f'<font size="14" color="#0284C7"><b>{val}</b></font><br/>'
+                    f'<font size="8" color="#0F172A"><b>{lbl}</b></font>'
+                )
+                if desc:
+                    clean_desc = desc[:45] + ("..." if len(desc) > 45 else "")
+                    cell_html += f'<br/><font size="7" color="#64748B">{clean_desc}</font>'
+                card_cells.append(Paragraph(cell_html, metric_card_style))
+
+            metric_table = Table([card_cells], colWidths=[col_width] * len(metrics))
+            metric_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
+                ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#CBD5E1")),
+                ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('TOPPADDING', (0,0), (-1,-1), 6),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ('LEFTPADDING', (0,0), (-1,-1), 6),
+                ('RIGHTPADDING', (0,0), (-1,-1), 6),
+            ]))
+            story.append(metric_table)
+            story.append(Spacer(1, 8))
+
+        def format_markdown_inline_for_reportlab(text: str) -> str:
+            t = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            t = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", t)
+            t = re.sub(r"\*(.*?)\*", r"<i>\1</i>", t)
+            t = re.sub(r"`(.*?)`", r'<font color="#0284C7" name="Courier">\1</font>', t)
+            return t
+
+        in_executive_summary = False
+        summary_paragraphs = []
+
+        def flush_summary():
+            nonlocal in_executive_summary, summary_paragraphs
+            if summary_paragraphs:
+                summary_text = "<br/><br/>".join(summary_paragraphs)
+                callout_table = Table([[Paragraph(summary_text, summary_callout_style)]], colWidths=[letter[0] - 90])
+                callout_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F0FDF4")),
+                    ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#BBF7D0")),
+                    ('LINEBEFORE', (0,0), (-1,-1), 3.5, colors.HexColor("#16A34A")),
+                    ('TOPPADDING', (0,0), (-1,-1), 7),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 7),
+                    ('LEFTPADDING', (0,0), (-1,-1), 10),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 10),
+                ]))
+                story.append(callout_table)
+                story.append(Spacer(1, 6))
+                summary_paragraphs = []
+            in_executive_summary = False
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            # Skip main title or tagline already rendered in banner
+            if (line.startswith("# ") and clean_title.lower() in line.lower()) or (line.startswith("*") and line.endswith("*") and line.strip("*_ ") == tagline):
+                continue
+
+            if line.startswith("## "):
+                flush_summary()
+                heading_raw = line[3:].strip()
+                if "executive summary" in heading_raw.lower() or "value proposition" in heading_raw.lower():
+                    in_executive_summary = True
+                heading = format_markdown_inline_for_reportlab(heading_raw)
+                story.append(Paragraph(heading, h2_style))
+                story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#E2E8F0"), spaceAfter=4))
+            elif line.startswith("### "):
+                flush_summary()
+                heading = format_markdown_inline_for_reportlab(line[4:].strip())
+                story.append(Paragraph(heading, h3_style))
+            elif line.startswith(("- ", "* ", "• ")):
+                flush_summary()
+                bullet_content = format_markdown_inline_for_reportlab(line[2:].strip())
+                story.append(Paragraph(f"&bull;&nbsp;&nbsp;{bullet_content}", bullet_style))
+            elif in_executive_summary:
+                summary_paragraphs.append(format_markdown_inline_for_reportlab(line))
+            elif line.startswith(">"):
+                quote_content = format_markdown_inline_for_reportlab(line.lstrip("> ").strip())
+                story.append(Paragraph(quote_content, summary_callout_style))
+            else:
+                body_content = format_markdown_inline_for_reportlab(line)
+                story.append(Paragraph(body_content, body_style))
+
+        flush_summary()
+        doc.build(story, canvasmaker=BrochureNumberedCanvas)
+        buffer.seek(0)
+        return buffer
+
+    @classmethod
+    def export_to_pdf(cls, title: str, markdown_content: str, variant_type: str = "technical") -> io.BytesIO:
         """Generate a crisp, styled PDF document using ReportLab."""
+        if variant_type == "client_brochure":
+            return cls.export_brochure_to_pdf(title, markdown_content)
+
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -362,3 +669,4 @@ class CaseStudyExporter:
         doc.build(story, canvasmaker=NumberedCanvas)
         buffer.seek(0)
         return buffer
+

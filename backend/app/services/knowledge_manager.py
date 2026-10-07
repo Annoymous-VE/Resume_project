@@ -8,7 +8,8 @@ from app.ai.schemas.knowledge import (
     ProvenanceFact,
     KnowledgeCoverage,
     CoverageLevel,
-    ExtractedAnswerFacts
+    ExtractedAnswerFacts,
+    ObstacleMitigationPair
 )
 from app.ai.prompts.question_generation import FACT_EXTRACTION_PROMPT
 from app.ai.llm import BaseLLMClient
@@ -102,9 +103,20 @@ class KnowledgeManager:
         elif category == "technical_decisions":
             current_knowledge.technical_decisions.append(fact_text)
         elif category == "challenges":
-            current_knowledge.challenges.append(fact_text)
+            from app.services.interview_engine import InterviewEngine
+            if not InterviewEngine.is_dismissive_reply(fact_text):
+                current_knowledge.challenges.append(fact_text)
+                if not any(p.obstacle == fact_text for p in current_knowledge.obstacle_mitigations):
+                    current_knowledge.obstacle_mitigations.append(ObstacleMitigationPair(
+                        obstacle=fact_text
+                    ))
         elif category == "solutions":
             current_knowledge.solutions.append(fact_text)
+            if current_knowledge.obstacle_mitigations:
+                for pair in reversed(current_knowledge.obstacle_mitigations):
+                    if not pair.measures_taken:
+                        pair.measures_taken = fact_text
+                        break
         elif category == "tradeoffs":
             current_knowledge.tradeoffs.append(fact_text)
         elif category == "performance":
@@ -139,8 +151,37 @@ class KnowledgeManager:
                     system_prompt="You are a precise technical fact extractor for software engineering case studies."
                 )
                 if res is not None:
+                    now_str = datetime.now(timezone.utc).isoformat()
+                    from app.services.interview_engine import InterviewEngine
+
+                    # 1. Process explicit obstacle_mitigations pairs if extracted
+                    if res.obstacle_mitigations:
+                        for pair in res.obstacle_mitigations:
+                            if not pair.obstacle or InterviewEngine.is_dismissive_reply(pair.obstacle):
+                                continue
+                            current_knowledge.obstacle_mitigations.append(pair)
+                            if pair.obstacle not in current_knowledge.challenges:
+                                current_knowledge.challenges.append(pair.obstacle)
+                            if pair.measures_taken and pair.measures_taken not in current_knowledge.solutions:
+                                current_knowledge.solutions.append(pair.measures_taken)
+                            current_knowledge.evidence.append(ProvenanceFact(
+                                fact=pair.obstacle,
+                                source="conversation",
+                                confidence=0.98,
+                                category="challenges",
+                                created_at=now_str
+                            ))
+                            if pair.measures_taken:
+                                current_knowledge.evidence.append(ProvenanceFact(
+                                    fact=pair.measures_taken,
+                                    source="conversation",
+                                    confidence=0.98,
+                                    category="solutions",
+                                    created_at=now_str
+                                ))
+
+                    # 2. Process general facts
                     if res.facts:
-                        now_str = datetime.now(timezone.utc).isoformat()
                         valid_cats = {
                             "problem", "architecture", "technical_decisions",
                             "challenges", "solutions", "tradeoffs", "performance", "impact"
@@ -218,11 +259,11 @@ class KnowledgeManager:
                 else CoverageLevel.UNKNOWN
             ),
             challenges=(
-                CoverageLevel.SUFFICIENT if len(knowledge.challenges) >= 1
+                CoverageLevel.SUFFICIENT if (len(knowledge.challenges) >= 1 or len(knowledge.obstacle_mitigations) >= 1)
                 else CoverageLevel.UNKNOWN
             ),
             solutions=(
-                CoverageLevel.SUFFICIENT if len(knowledge.solutions) >= 1
+                CoverageLevel.SUFFICIENT if (len(knowledge.solutions) >= 1 or any(p.measures_taken for p in knowledge.obstacle_mitigations))
                 else CoverageLevel.UNKNOWN
             ),
             tradeoffs=(

@@ -49,6 +49,17 @@ class Settings(BaseModel):
     # Interview defaults (7 rounds max guarantees high efficiency without infinite loops)
     MAX_INTERVIEW_ROUNDS: int = int(os.getenv("MAX_INTERVIEW_ROUNDS", "7"))
 
+    # Auth & JWT Settings
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "resume-case-study-super-secret-jwt-signing-key-32bytes-min-2026")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+    # Supabase Storage settings
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "").strip()
+    SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_SERVICE", "")).strip()
+    SUPABASE_STORAGE_BUCKET: str = os.getenv("SUPABASE_STORAGE_BUCKET", "Resumes").strip()
+
     # CORS settings
     CORS_ORIGINS: list[str] = _get_cors_origins()
 

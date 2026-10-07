@@ -1,11 +1,13 @@
 from typing import Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.models.entities import User
 from app.api.dependencies import (
     get_project_repo,
     get_interview_repo,
     get_knowledge_manager,
     get_interview_engine,
+    get_optional_current_user,
     ProjectRepository,
     InterviewRepository,
     KnowledgeManager,
@@ -23,6 +25,7 @@ class AnswerSubmission(BaseModel):
 @router.post("/start", summary="Start or resume an adaptive interview for a project")
 async def start_interview(
     project_id: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     project_repo: ProjectRepository = Depends(get_project_repo),
     interview_repo: InterviewRepository = Depends(get_interview_repo),
     knowledge_manager: KnowledgeManager = Depends(get_knowledge_manager),
@@ -31,6 +34,12 @@ async def start_interview(
     project = await project_repo.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
+
+    if project.user_id and current_user and project.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: this project belongs to another account."
+        )
 
     knowledge_record = await project_repo.get_knowledge(project_id)
     if not knowledge_record:
@@ -117,11 +126,22 @@ def is_stop_phrase(text: str) -> bool:
 async def answer_question(
     project_id: str,
     submission: AnswerSubmission,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     project_repo: ProjectRepository = Depends(get_project_repo),
     interview_repo: InterviewRepository = Depends(get_interview_repo),
     knowledge_manager: KnowledgeManager = Depends(get_knowledge_manager),
     interview_engine: InterviewEngine = Depends(get_interview_engine)
 ):
+    project = await project_repo.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    if project.user_id and current_user and project.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: this project belongs to another account."
+        )
+
     session = await interview_repo.get_session_by_project(project_id)
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found.")
@@ -207,6 +227,55 @@ async def answer_question(
         )
         session = await interview_repo.get_session_by_project(project_id)
 
+        return {
+            "session_id": session.id,
+            "status": "in_progress",
+            "round_count": session.round_count,
+            "coverage": session.coverage_json,
+            "knowledge": knowledge.model_dump() if knowledge else None,
+            "evidence": [e.model_dump() for e in knowledge.evidence] if knowledge else [],
+            "exchanges": [
+                {
+                    "id": ex.id,
+                    "question": ex.question,
+                    "target_area": ex.target_area,
+                    "rationale": ex.rationale,
+                    "answer": ex.answer,
+                    "created_at": ex.created_at.isoformat() if ex.created_at else None,
+                    "answered_at": ex.answered_at.isoformat() if ex.answered_at else None
+                }
+                for ex in session.exchanges
+            ],
+            "current_question": {
+                "exchange_id": new_exchange.id,
+                "target_area": new_exchange.target_area,
+                "question": new_exchange.question,
+                "rationale": new_exchange.rationale
+            },
+            "stop_reason": None
+        }
+
+    # Check if user gave a dismissive or superficial reply to an obstacle inquiry
+    if exchange.target_area == "challenges" and interview_engine.is_dismissive_reply(submission.answer):
+        current_cov = knowledge_manager.compute_coverage(knowledge) if knowledge else knowledge_manager.compute_coverage(ProjectKnowledge(project_id=project_id, project_name=""))
+        escalated_q = interview_engine.generate_obstacle_escalation_question(
+            technologies=knowledge.technologies if knowledge else None,
+            round_num=session.round_count + 1
+        )
+        new_exchange = await interview_repo.add_exchange(
+            session_id=session.id,
+            question_id=escalated_q.id,
+            target_area=escalated_q.target_area,
+            question=escalated_q.question,
+            rationale=escalated_q.rationale
+        )
+        session = await interview_repo.update_session_state(
+            session_id=session.id,
+            coverage_json=current_cov.model_dump(),
+            round_increment=True,
+            status="in_progress"
+        )
+        session = await interview_repo.get_session_by_project(project_id)
         return {
             "session_id": session.id,
             "status": "in_progress",
@@ -591,9 +660,20 @@ async def continue_interview(
 @router.get("/status", summary="Get interview session status and Q&A history")
 async def get_interview_status(
     project_id: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     interview_repo: InterviewRepository = Depends(get_interview_repo),
     project_repo: ProjectRepository = Depends(get_project_repo)
 ):
+    project = await project_repo.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    if project.user_id and current_user and project.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: this project belongs to another account."
+        )
+
     session = await interview_repo.get_session_by_project(project_id)
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found.")

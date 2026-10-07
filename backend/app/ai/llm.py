@@ -83,22 +83,36 @@ class MockLLMClient(BaseLLMClient):
                 ])
             )
             if is_question_or_clarification:
-                return schema(facts=[])
+                return schema(facts=[], obstacle_mitigations=[])
+
+            obstacle_mitigations = []
+            from app.services.interview_engine import InterviewEngine
+            is_dismissive = InterviewEngine.is_dismissive_reply(ans_text)
 
             # Categorize heuristically for mock
             if any(w in ans_text.lower() for w in ["latency", "speed", "ms", "sec", "%", "throughput", "rpm", "qps", "faster"]):
                 facts.append(ExtractedFactItem(category="performance", fact=ans_text))
-            if any(w in ans_text.lower() for w in ["bug", "issue", "bottleneck", "fail", "timeout", "challenge", "hard", "error"]):
+            if not is_dismissive and any(w in ans_text.lower() for w in ["bug", "issue", "bottleneck", "fail", "timeout", "challenge", "hard", "error", "obstacle", "deadlock", "rate limit", "slow query"]):
                 facts.append(ExtractedFactItem(category="challenges", fact=ans_text))
+                from app.ai.schemas.knowledge import ObstacleMitigationPair
+                measures = None
+                if any(w in ans_text.lower() for w in ["resolved", "fixed", "optimized", "implemented", "mitigated", "refactored", "solution", "reduced", "switched", "added", "decouple"]):
+                    measures = "Implemented architectural mitigations, caching, and query optimization."
+                obstacle_mitigations.append(ObstacleMitigationPair(
+                    obstacle=ans_text,
+                    root_cause="High contention and unindexed queries under peak traffic.",
+                    measures_taken=measures,
+                    outcome="Eliminated database deadlocks and restored sub-50ms latency."
+                ))
             if any(w in ans_text.lower() for w in ["decided", "chose", "selected", "instead of", "tradeoff", "versus", "vs"]):
                 facts.append(ExtractedFactItem(category="technical_decisions", fact=ans_text))
             if any(w in ans_text.lower() for w in ["flow", "queue", "api", "database", "redis", "fastapi", "service", "pipeline", "component"]):
                 facts.append(ExtractedFactItem(category="architecture", fact=ans_text))
             
-            if not facts:
+            if not facts and not obstacle_mitigations:
                 # Default to architecture or problem
                 facts.append(ExtractedFactItem(category="architecture", fact=ans_text))
-            return schema(facts=facts)
+            return schema(facts=facts, obstacle_mitigations=obstacle_mitigations)
 
         if schema_name == "InitialQuestionsResult":
             from app.ai.schemas.question import InitialQuestionsResult, GeneratedQuestion
@@ -138,17 +152,81 @@ class MockLLMClient(BaseLLMClient):
             if match:
                 target = match.group(1).strip()
 
+            if target == "challenges":
+                ans_match = re.search(r"Candidate's Latest Answer:\s*([^\n\r]+)", prompt, re.IGNORECASE)
+                cand_ans = ans_match.group(1).strip() if ans_match else ""
+                from app.services.interview_engine import InterviewEngine
+                if cand_ans and InterviewEngine.is_dismissive_reply(cand_ans):
+                    q_text = (
+                        "Even well-designed architectures face constraints like API rate limits, "
+                        "database locks, slow queries, or third-party integration bugs. Which of these did you experience?"
+                    )
+                else:
+                    q_text = (
+                        "In real-world engineering, virtually no system is built without friction. "
+                        "What were the key obstacles, architectural bottlenecks, or failure modes you encountered, "
+                        "and what specific measures did you take to overcome them?"
+                    )
+            elif target == "solutions":
+                q_text = (
+                    "In real-world engineering, overcoming friction requires concrete technical intervention. "
+                    "What specific measures, architectural mitigations, or optimizations did you implement to overcome those obstacles?"
+                )
+            else:
+                q_text = f"Could you explain the specific technical mechanisms and implementation details for {target}?"
+
             return schema(
                 has_next_question=True,
                 question=GeneratedQuestion(
                     id=f"q_{target}_1",
                     target_area=target,
-                    question=f"Could you explain the specific technical mechanisms and implementation details for {target}?",
+                    question=q_text,
                     rationale=f"Captures high-value technical depth for {target}."
                 ),
                 coverage_update={
                     target: CoverageLevel.PARTIAL
                 }
+            )
+
+        if schema_name == "GeneratedClientBrochure":
+            from app.ai.schemas.case_study import GeneratedClientBrochure, CaseStudySection, ClientBrochureMetric
+            return schema(
+                project_id="proj_brochure",
+                title="Enterprise Distributed Cache & Performance Acceleration Suite",
+                tagline="Accelerating enterprise data throughput by 10x with zero downtime.",
+                executive_summary="An enterprise-grade caching solution designed to eliminate database bottlenecks and streamline operations under peak demand.",
+                target_audience="High-volume enterprise applications and data teams",
+                key_metrics=[
+                    ClientBrochureMetric(label="Throughput", value="100,000 req/sec", description="High-capacity event processing capacity"),
+                    ClientBrochureMetric(label="Latency Reduction", value="98% Faster", description="Sub-2ms response times under heavy load")
+                ],
+                sections=[
+                    CaseStudySection(
+                        title="Executive Summary & Value Proposition",
+                        format_type="paragraph",
+                        content="Engineered to tackle critical latency constraints and deliver continuous operational resilience.",
+                        order=1
+                    ),
+                    CaseStudySection(
+                        title="The Business Challenge & Client Pain Points",
+                        format_type="hybrid",
+                        content="Operational bottlenecks were impeding response times and increasing infrastructure overhead.\n- **Bottleneck Risk**: High database lock contention during traffic spikes.\n- **Scalability Constraint**: Legacy systems could not scale linearly without ballooning hardware costs.",
+                        order=2
+                    ),
+                    CaseStudySection(
+                        title="Delivered Solution & Core Capabilities",
+                        format_type="hybrid",
+                        content="A unified acceleration layer providing seamless throughput.\n- **Real-Time Data Ingestion**: Non-blocking connection management.\n- **Operational Resilience**: Zero downtime failover protection.",
+                        order=3
+                    ),
+                    CaseStudySection(
+                        title="Business Impact & Measured ROI",
+                        format_type="bullets",
+                        content="- **Operational Throughput**: **100k requests/second** sustained with sub-millisecond overhead.\n- **Hardware Efficiency**: **45% reduction** in required backend compute instances.",
+                        order=4
+                    )
+                ],
+                markdown_content="# Enterprise Distributed Cache & Performance Acceleration Suite\n\n*Accelerating enterprise data throughput by 10x with zero downtime.*\n\n## Executive Summary & Value Proposition\nEngineered to tackle critical latency constraints and deliver continuous operational resilience.\n\n## The Business Challenge & Client Pain Points\nOperational bottlenecks were impeding response times and increasing infrastructure overhead.\n- **Bottleneck Risk**: High database lock contention during traffic spikes.\n- **Scalability Constraint**: Legacy systems could not scale linearly without ballooning hardware costs.\n\n## Delivered Solution & Core Capabilities\nA unified acceleration layer providing seamless throughput.\n- **Real-Time Data Ingestion**: Non-blocking connection management.\n- **Operational Resilience**: Zero downtime failover protection.\n\n## Business Impact & Measured ROI\n- **Operational Throughput**: **100k requests/second** sustained with sub-millisecond overhead.\n- **Hardware Efficiency**: **45% reduction** in required backend compute instances."
             )
 
         # Generic default

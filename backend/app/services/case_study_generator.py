@@ -5,11 +5,14 @@ from app.ai.llm import BaseLLMClient
 from app.ai.schemas.knowledge import ProjectKnowledge
 from app.ai.schemas.case_study import (
     GeneratedCaseStudy,
+    GeneratedClientBrochure,
     CaseStudySection
 )
 from app.ai.prompts.case_study import (
     CASE_STUDY_SYSTEM_PROMPT,
-    CASE_STUDY_USER_PROMPT
+    CASE_STUDY_USER_PROMPT,
+    CLIENT_BROCHURE_SYSTEM_PROMPT,
+    CLIENT_BROCHURE_USER_PROMPT
 )
 
 # Standardized technology categorization map
@@ -225,7 +228,14 @@ class CaseStudyGenerator:
     def __init__(self, llm_client: BaseLLMClient):
         self.llm = llm_client
 
-    async def generate_case_study(self, knowledge: ProjectKnowledge) -> GeneratedCaseStudy:
+    async def generate_case_study(
+        self,
+        knowledge: ProjectKnowledge,
+        variant_type: str = "technical"
+    ) -> GeneratedCaseStudy:
+        if variant_type == "client_brochure":
+            return await self.generate_client_brochure(knowledge)
+
         knowledge_json = json.dumps(knowledge.model_dump(), indent=2)
         user_prompt = CASE_STUDY_USER_PROMPT.format(project_knowledge_json=knowledge_json)
 
@@ -243,6 +253,118 @@ class CaseStudyGenerator:
         # Deterministic grounded case study builder adhering strictly to universal format
         raw_cs = self._build_deterministic_case_study(knowledge)
         return normalize_case_study(raw_cs, knowledge=knowledge)
+
+    async def generate_client_brochure(self, knowledge: ProjectKnowledge) -> GeneratedCaseStudy:
+        knowledge_json = json.dumps(knowledge.model_dump(), indent=2)
+        user_prompt = CLIENT_BROCHURE_USER_PROMPT.format(project_knowledge_json=knowledge_json)
+
+        try:
+            res: GeneratedClientBrochure = await self.llm.generate_structured(
+                prompt=user_prompt,
+                schema=GeneratedClientBrochure,
+                system_prompt=CLIENT_BROCHURE_SYSTEM_PROMPT
+            )
+            if res.markdown_content and res.sections:
+                return GeneratedCaseStudy(
+                    project_id=res.project_id or knowledge.project_id,
+                    title=res.title,
+                    executive_summary=res.executive_summary,
+                    sections=res.sections,
+                    markdown_content=res.markdown_content
+                )
+        except Exception:
+            pass
+
+        return self._build_deterministic_client_brochure(knowledge)
+
+    def _build_deterministic_client_brochure(self, knowledge: ProjectKnowledge) -> GeneratedCaseStudy:
+        sections: List[CaseStudySection] = []
+        order = 1
+
+        title = f"{knowledge.project_name} — Client Solution Overview"
+        tagline = "Executive Solution Brief & Measurable Business Transformation"
+
+        # 1. Executive Summary & Value Proposition (Narrative Paragraph)
+        summary = (
+            f"An executive overview of **{knowledge.project_name}**, a strategic solution "
+            f"engineered to streamline operations, enhance user experience, and drive measurable efficiency."
+        )
+        if knowledge.problem.statement:
+            summary += f" The solution directly eliminates: {knowledge.problem.statement}."
+        sections.append(CaseStudySection(title="Executive Summary & Value Proposition", format_type="paragraph", content=summary, order=order))
+        order += 1
+
+        # 2. The Business Challenge & Client Pain Points (Hybrid)
+        challenge_bullets = []
+        if knowledge.problem.context:
+            challenge_bullets.append(f"- **Operational Bottleneck**: {knowledge.problem.context}")
+        if knowledge.problem.motivation:
+            challenge_bullets.append(f"- **Business Need**: {knowledge.problem.motivation}")
+        if knowledge.challenges:
+            for c in knowledge.challenges[:2]:
+                challenge_bullets.append(f"- **Friction Encountered**: {c}")
+        if not challenge_bullets:
+            challenge_bullets.append("- **Market Challenge**: Legacy manual workflows limited scalability and operational throughput.")
+        challenge_intro = "Prior to implementation, business operations faced critical constraints and manual overhead."
+        challenge_content = f"{challenge_intro}\n" + "\n".join(challenge_bullets)
+        sections.append(CaseStudySection(title="The Business Challenge & Client Pain Points", format_type="hybrid", content=challenge_content, order=order))
+        order += 1
+
+        # 3. Delivered Solution & Core Capabilities (Hybrid)
+        sol_bullets = []
+        if knowledge.solutions:
+            for s in knowledge.solutions[:3]:
+                sol_bullets.append(f"- **Delivered Capability**: {s}")
+        if knowledge.architecture.components:
+            for comp in knowledge.architecture.components[:2]:
+                sol_bullets.append(f"- **Core Platform Module**: {comp}")
+        if not sol_bullets:
+            sol_bullets.append("- **Automated Platform**: Unified automated pipeline eliminating manual interventions.")
+        sol_intro = "The delivered solution provides an end-to-end automated platform built for reliability and ease of use."
+        sol_content = f"{sol_intro}\n" + "\n".join(sol_bullets)
+        sections.append(CaseStudySection(title="Delivered Solution & Core Capabilities", format_type="hybrid", content=sol_content, order=order))
+        order += 1
+
+        # 4. Business Impact & Measured ROI (Bullets)
+        impact_bullets = []
+        if knowledge.performance:
+            for p in knowledge.performance[:3]:
+                impact_bullets.append(f"- **Operational Throughput**: **{p}** — sustained during peak enterprise volume.")
+        if knowledge.impact:
+            for imp in knowledge.impact[:2]:
+                impact_bullets.append(f"- **Efficiency Gain**: **{imp}** — measurable client outcome.")
+        if not impact_bullets:
+            impact_bullets.append("- **Operational Velocity**: **Significant Speedup** — automated execution reducing turnaround time.")
+            impact_bullets.append("- **Process Accuracy**: **High Precision** — consistent, verifiable business results.")
+        sections.append(CaseStudySection(title="Business Impact & Measured ROI", format_type="bullets", content="\n".join(impact_bullets), order=order))
+        order += 1
+
+        # 5. Technology Foundation (Categorized Bullets)
+        if knowledge.technologies:
+            cat_map = categorize_technologies(knowledge.technologies)
+            tech_bullets = []
+            for cat, items in cat_map.items():
+                tech_bullets.append(f"- **{cat}**: {', '.join(items)}")
+            if tech_bullets:
+                sections.append(CaseStudySection(title="Technology Foundation", format_type="bullets", content="\n".join(tech_bullets), order=order))
+
+        # Markdown assembly
+        md_parts = [
+            f"# {title}\n",
+            f"*{tagline}*\n"
+        ]
+        for s in sections:
+            md_parts.append(f"## {s.title}\n{s.content}\n")
+
+        markdown_content = "\n".join(md_parts).strip()
+
+        return GeneratedCaseStudy(
+            project_id=knowledge.project_id,
+            title=title,
+            executive_summary=summary,
+            sections=sections,
+            markdown_content=markdown_content
+        )
 
     def _build_deterministic_case_study(self, knowledge: ProjectKnowledge) -> GeneratedCaseStudy:
         sections: List[CaseStudySection] = []
@@ -304,7 +426,21 @@ class CaseStudyGenerator:
             order += 1
 
         # 5. Challenges & Solutions (Structured Bullet Pairs)
-        if knowledge.challenges or knowledge.solutions:
+        if knowledge.obstacle_mitigations:
+            cs_bullets = []
+            for pair in knowledge.obstacle_mitigations:
+                bullet = f"- **Challenge — {pair.obstacle}**"
+                if pair.root_cause:
+                    bullet += f"\n  - **Root Cause**: {pair.root_cause}"
+                if pair.measures_taken:
+                    bullet += f"\n  - **Solution**: {pair.measures_taken}"
+                if pair.outcome:
+                    bullet += f"\n  - **Outcome**: {pair.outcome}"
+                cs_bullets.append(bullet)
+            cs_content = "\n".join(cs_bullets)
+            sections.append(CaseStudySection(title="Challenges & Solutions", format_type="bullets", content=cs_content, order=order))
+            order += 1
+        elif knowledge.challenges or knowledge.solutions:
             cs_bullets = []
             for i, c in enumerate(knowledge.challenges):
                 sol = knowledge.solutions[i] if i < len(knowledge.solutions) else "Engineered architectural mitigation and fault recovery mechanisms."

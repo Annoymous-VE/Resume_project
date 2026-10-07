@@ -24,6 +24,12 @@ class ArchitectureKnowledge(BaseModel):
     components: List[str] = Field(default_factory=list)
     data_flow: Optional[str] = None
 
+class ObstacleMitigationPair(BaseModel):
+    obstacle: str = Field(..., description="Description of the roadblock/issue.")
+    root_cause: Optional[str] = Field(default=None, description="Underlying technical cause.")
+    measures_taken: Optional[str] = Field(default=None, description="Architectural or code changes applied.")
+    outcome: Optional[str] = Field(default=None, description="Measured result after resolution.")
+
 class ProjectKnowledge(BaseModel):
     project_id: str
     project_name: str
@@ -34,6 +40,7 @@ class ProjectKnowledge(BaseModel):
     implementation: List[str] = Field(default_factory=list)
     challenges: List[str] = Field(default_factory=list)
     solutions: List[str] = Field(default_factory=list)
+    obstacle_mitigations: List[ObstacleMitigationPair] = Field(default_factory=list)
     tradeoffs: List[str] = Field(default_factory=list)
     performance: List[str] = Field(default_factory=list)
     impact: List[str] = Field(default_factory=list)
@@ -56,4 +63,9 @@ class ExtractedFactItem(BaseModel):
 
 class ExtractedAnswerFacts(BaseModel):
     facts: List[ExtractedFactItem] = Field(default_factory=list)
+    obstacle_mitigations: List[ObstacleMitigationPair] = Field(
+        default_factory=list,
+        description="Structured obstacle-mitigation pairs extracted from answers describing roadblocks, root causes, measures taken, and outcomes."
+    )
+
 

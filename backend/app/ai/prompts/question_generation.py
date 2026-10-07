@@ -13,10 +13,18 @@ Extract MAXIMUM technical depth across all 8 criteria in the FEWEST questions po
 
 Strict Guidelines:
 1. DYNAMIC & TECH-ANCHORED: Anchor every question directly to the developer's declared technologies, architecture, and previous responses. NEVER ask bland textbook questions.
-2. HIGH-YIELD COMPOUND PROBING: When natural, pair closely related missing criteria (e.g., asking for the tricky hurdle AND how they resolved it, or the stack choice AND its performance trade-off). This allows a single great answer to cover multiple criteria at once!
-3. PROBE FOR CONCRETE DEPTH: Ask "specifically how", "what mechanism", "why over alternatives", or ask for ballpark metrics so the developer is compelled to share meaningful details rather than 1-sentence vague replies.
-4. LOW FRICTION & PUNCHY: Keep questions approachable, encouraging, and strictly 1-2 sentences. Easy to read and answer.
-5. ZERO REPETITION: Never re-ask about an area that is already sufficiently covered.
+2. TARGETED REAL-WORLD OBSTACLE & RESOLUTION PROBING:
+   In real-world engineering, virtually no system is built without friction. When targeting 'challenges' or 'solutions', explicitly acknowledge this reality. Ask directly:
+   "In real-world engineering, virtually no system is built without friction. What were the key obstacles, architectural bottlenecks, or failure modes you encountered, and what specific measures did you take to overcome them?"
+   Ensure the developer is prompted to share real hurdles (e.g. concurrency deadlocks, rate-limits, slow queries, caching invalidation, or unexpected edge cases) along with the specific technical measures taken to resolve them.
+3. FALLBACK ESCALATION FOR SUPERFICIAL ANSWERS:
+   If the developer gives a dismissive or superficial response regarding obstacles (e.g., "everything went smoothly", "there were no issues", "it worked fine"), do not accept it.
+   Immediately follow up with category prompts:
+   "Even well-designed architectures face constraints like API rate limits, database locks, slow queries, or third-party integration bugs. Which of these did you experience?"
+4. HIGH-YIELD COMPOUND PROBING: When natural, pair closely related missing criteria (e.g., asking for the tricky hurdle AND how they resolved it, or the stack choice AND its performance trade-off). This allows a single great answer to cover multiple criteria at once!
+5. PROBE FOR CONCRETE DEPTH: Ask "specifically how", "what mechanism", "why over alternatives", or ask for ballpark metrics so the developer is compelled to share meaningful details rather than 1-sentence vague replies.
+6. LOW FRICTION & PUNCHY: Keep questions approachable, encouraging, and strictly 1-2 sentences. Easy to read and answer.
+7. ZERO REPETITION: Never re-ask about an area that is already sufficiently covered.
 """
 
 INITIAL_QUESTIONS_PROMPT = """You are conducting an adaptive technical interview for a software engineering case study.
@@ -62,10 +70,17 @@ Candidate's Latest Answer:
 
 Instructions:
 1. CRAFT ONE HIGH-YIELD QUESTION (strictly 1-2 sentences) targeting {target_area}.
-2. ANCHOR DEEPLY IN CONTEXT: Reference their specific technologies ({technologies}) or what they just shared in their latest answer to ask a compelling, concrete question.
-3. PROBE FOR DEPTH: Ask "specifically how", "what architectural mechanism", "why over alternatives", or request ballpark metrics so the user provides rich technical substance rather than surface-level answers.
-4. EFFICIENT COMPOUNDING: Where natural, connect {target_area} with another missing dimension (e.g. asking for the bottleneck AND how it was resolved, or the decision AND its trade-off) to capture multiple criteria in a single exchange.
-5. If all 8 dimensions are already SUFFICIENT, set has_next_question=false. Otherwise, set has_next_question=true.
+2. TARGETED OBSTACLE & RESOLUTION PROBING (WHEN TARGETING CHALLENGES/SOLUTIONS):
+   In real-world engineering, virtually no system is built without friction. If {target_area} is 'challenges' or 'solutions', frame your question around this truth.
+   Explicitly ask: "In real-world engineering, virtually no system is built without friction. What were the key obstacles, architectural bottlenecks, or failure modes you encountered with {technologies}, and what specific measures did you take to overcome them?"
+3. FALLBACK ESCALATION FOR SUPERFICIAL ANSWERS:
+   If Candidate's Latest Answer to an obstacle question is dismissive or superficial (e.g. "everything went smoothly", "no issues", "it worked fine"), do not accept it.
+   Immediately follow up with category prompts:
+   "Even well-designed architectures face constraints like API rate limits, database locks, slow queries, or third-party integration bugs. Which of these did you experience?"
+4. ANCHOR DEEPLY IN CONTEXT: Reference their specific technologies ({technologies}) or what they just shared in their latest answer to ask a compelling, concrete question.
+5. PROBE FOR DEPTH: Ask "specifically how", "what architectural mechanism", "why over alternatives", or request ballpark metrics so the user provides rich technical substance rather than surface-level answers.
+6. EFFICIENT COMPOUNDING: Where natural, connect {target_area} with another missing dimension (e.g. asking for the bottleneck AND how it was resolved, or the decision AND its trade-off) to capture multiple criteria in a single exchange.
+7. If all 8 dimensions are already SUFFICIENT, set has_next_question=false. Otherwise, set has_next_question=true.
 """
 
 CLARIFICATION_SYSTEM_PROMPT = """You are an approachable, friendly senior engineering colleague conducting a casual, supportive technical chat with a developer.
@@ -94,13 +109,22 @@ Developer's message:
 Explain what this question is looking for in simple words, give 1-2 concrete examples/hints based on their technologies, and ask what part they'd like help with or invite them to answer simply.
 """
 
-FACT_EXTRACTION_PROMPT = """Extract all concrete technical facts from the developer's message into structured categories.
+FACT_EXTRACTION_PROMPT = """Extract all concrete technical facts and structured obstacle-mitigation pairs from the developer's message.
 A single message might mention multiple areas (e.g. both architecture and performance, or challenges and decisions).
 
 IMPORTANT:
-- If the developer's message is a question, a request for clarification (e.g., "what do you mean by that?", "can you explain?"), an expression of confusion, or contains no concrete technical facts about their implementation, return an EMPTY facts list (facts: []).
+- If the developer's message is a question, a request for clarification (e.g., "what do you mean by that?", "can you explain?"), an expression of confusion, or contains no concrete technical facts about their implementation, return empty facts and empty obstacle_mitigations.
 - Only extract genuine technical statements, architecture details, decisions, hurdles, metrics, or outcomes.
 
+STRUCTURED OBSTACLE-MITIGATION PAIRS:
+When the developer discusses engineering friction, bugs, failure modes, bottlenecks, rate limits, or hurdles:
+Extract them into structured obstacle_mitigations pairs:
+- obstacle: Description of the roadblock/issue.
+- root_cause: Underlying technical cause.
+- measures_taken: Architectural or code changes applied.
+- outcome: Measured result after resolution.
+
+GENERAL FACTS:
 Extract each distinct factual point and tag it with its corresponding category:
 - problem
 - architecture

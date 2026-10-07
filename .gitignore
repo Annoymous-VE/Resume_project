@@ -16,11 +16,13 @@
 *.db
 *.sqlite
 *.sqlite3
+*.bak
 storage/app.db
 storage/uploads/*
 !storage/uploads/.gitkeep
 storage/generated/*
 !storage/generated/.gitkeep
+scratch/
 
 # ------------------------------------------------------------------------------
 # Python & Virtual Environments

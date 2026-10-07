@@ -6,8 +6,17 @@ import {
   submitAnswer,
   continueInterview,
   generateCaseStudy,
-  getCaseStudyExportUrl
+  fetchCaseStudy,
+  fetchAllCaseStudies,
+  getCaseStudyExportUrl,
+  getStoredUser,
+  fetchCurrentUser,
+  logoutUser
 } from "./api/client";
+import LandingPage from "./LandingPage";
+import Navbar from "./components/Navbar";
+import AuthModal from "./components/AuthModal";
+import DashboardView from "./components/DashboardView";
 
 function renderInline(text) {
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
@@ -111,7 +120,7 @@ const STEPS = [
   { num: 1, label: "Upload Resume" },
   { num: 2, label: "Select Project" },
   { num: 3, label: "Interview" },
-  { num: 4, label: "Case Study" },
+  { num: 4, label: "Case Study & Brochure" },
 ];
 
 function StepperBar({ currentStep }) {
@@ -149,6 +158,12 @@ function StepperBar({ currentStep }) {
 }
 
 export default function App() {
+  // Authentication States
+  const [currentUser, setCurrentUser] = useState(() => getStoredUser());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState("login");
+  const [viewMode, setViewMode] = useState("wizard"); // "wizard" | "dashboard"
+
   const [file, setFile] = useState(null);
   const [resumeId, setResumeId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -161,6 +176,13 @@ export default function App() {
   const [caseStudy, setCaseStudy] = useState(null);
   const [error, setError] = useState(null);
   const [showRawMarkdown, setShowRawMarkdown] = useState(false);
+
+  // Audience format states (Technical Case Study vs. Client Brochure)
+  const [activeVariant, setActiveVariant] = useState("technical");
+  const [caseStudiesMap, setCaseStudiesMap] = useState({ technical: null, client_brochure: null });
+  const [isCaseStudyStep, setIsCaseStudyStep] = useState(false);
+  const [generatingVariant, setGeneratingVariant] = useState(null);
+  const [loadingVariant, setLoadingVariant] = useState(false);
 
   // States for manual unlisted project creation
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
@@ -190,8 +212,74 @@ export default function App() {
     }
   }, [caseStudy]);
 
+  // Verify authenticated session on mount
+  useEffect(() => {
+    fetchCurrentUser()
+      .then((user) => {
+        if (user) setCurrentUser(user);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleOpenAuth = (mode = "login") => {
+    setAuthModalMode(mode);
+    setIsAuthModalOpen(true);
+  };
+
+  const handleCloseAuth = () => {
+    setIsAuthModalOpen(false);
+  };
+
+  const handleAuthSuccess = (user) => {
+    setCurrentUser(user);
+  };
+
+  const handleLogout = () => {
+    logoutUser();
+    setCurrentUser(null);
+  };
+
+  const handleResetToHome = () => {
+    goBackToStep(1);
+  };
+
+  const handleDashboardSelectInterview = async (proj) => {
+    setViewMode("wizard");
+    await handleStartInterview(proj);
+  };
+
+  const handleDashboardSelectCaseStudy = async (proj) => {
+    setLoading(true);
+    setError(null);
+    setSelectedProject(proj);
+    try {
+      const existingList = await fetchAllCaseStudies(proj.id);
+      if (Array.isArray(existingList) && existingList.length > 0) {
+        const map = { technical: null, client_brochure: null };
+        existingList.forEach((item) => {
+          if (item.variant_type) map[item.variant_type] = item;
+        });
+        setCaseStudiesMap(map);
+        const chosen = map.technical || map.client_brochure || existingList[0];
+        setCaseStudy(chosen);
+        setActiveVariant(chosen.variant_type || "technical");
+      }
+      setIsCaseStudyStep(true);
+      setViewMode("wizard");
+    } catch (err) {
+      setError(err.message || "Failed to load case studies for project.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDashboardStartNewUpload = () => {
+    handleResetToHome();
+    setViewMode("wizard");
+  };
+
   /* ─── Derived wizard step ─── */
-  const currentStep = caseStudy
+  const currentStep = isCaseStudyStep
     ? 4
     : interviewSession && selectedProject
       ? 3
@@ -201,14 +289,18 @@ export default function App() {
 
   const goBackToStep = (step) => {
     if (step === 1) {
+      setIsCaseStudyStep(false);
       setCaseStudy(null);
+      setCaseStudiesMap({ technical: null, client_brochure: null });
       setInterviewSession(null);
       setSelectedProject(null);
     } else if (step === 2) {
+      setIsCaseStudyStep(false);
       setCaseStudy(null);
+      setCaseStudiesMap({ technical: null, client_brochure: null });
       setInterviewSession(null);
     } else if (step === 3) {
-      setCaseStudy(null);
+      setIsCaseStudyStep(false);
     }
   };
 
@@ -238,6 +330,11 @@ export default function App() {
   const handleUpload = async (e) => {
     e.preventDefault();
     if (!file) return;
+    if (!user) {
+      setShowAuthModal(true);
+      setError("Please sign in or create an account to upload your resume.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -347,13 +444,97 @@ export default function App() {
       const session = await startInterview(proj.id);
       setInterviewSession(session);
       setCaseStudy(null);
+      setCaseStudiesMap({ technical: null, client_brochure: null });
+      setActiveVariant("technical");
+      setIsCaseStudyStep(false);
       setAnswerInput("");
       setPendingAnswer(null);
       setGeneratingCaseStudy(false);
+
+      // Pre-fetch any existing case studies for this project in the background
+      fetchAllCaseStudies(proj.id)
+        .then((existingList) => {
+          if (Array.isArray(existingList) && existingList.length > 0) {
+            const map = { technical: null, client_brochure: null };
+            existingList.forEach((item) => {
+              if (item.variant_type) map[item.variant_type] = item;
+            });
+            setCaseStudiesMap(map);
+          }
+        })
+        .catch(() => {});
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGenerateVariant = async (variantToGenerate) => {
+    if (!selectedProject) return;
+    const variant = variantToGenerate || activeVariant || "technical";
+    setLoading(true);
+    setGeneratingCaseStudy(true);
+    setGeneratingVariant(variant);
+    setError(null);
+    try {
+      const cs = await generateCaseStudy(selectedProject.id, variant);
+      setCaseStudiesMap((prev) => ({ ...prev, [variant]: cs }));
+      setCaseStudy(cs);
+      setActiveVariant(variant);
+      setIsCaseStudyStep(true);
+
+      // Synchronize all variants from backend
+      fetchAllCaseStudies(selectedProject.id)
+        .then((all) => {
+          if (Array.isArray(all) && all.length > 0) {
+            const map = { technical: null, client_brochure: null };
+            all.forEach((item) => {
+              if (item.variant_type) map[item.variant_type] = item;
+            });
+            map[variant] = cs;
+            setCaseStudiesMap(map);
+          }
+        })
+        .catch(() => {});
+    } catch (err) {
+      setError(err.message || `Failed to generate ${variant === "client_brochure" ? "client brochure" : "case study"}.`);
+    } finally {
+      setLoading(false);
+      setGeneratingCaseStudy(false);
+      setGeneratingVariant(null);
+    }
+  };
+
+  const handleSwitchAudience = async (targetVariant) => {
+    if (targetVariant === activeVariant && caseStudy) return;
+    setActiveVariant(targetVariant);
+    setError(null);
+
+    // If already loaded in our local map:
+    if (caseStudiesMap[targetVariant]) {
+      setCaseStudy(caseStudiesMap[targetVariant]);
+      return;
+    }
+
+    // Try fetching from backend if not yet in state
+    if (selectedProject?.id) {
+      setLoadingVariant(true);
+      try {
+        const existing = await fetchCaseStudy(selectedProject.id, targetVariant);
+        if (existing && existing.markdown_content) {
+          setCaseStudiesMap((prev) => ({ ...prev, [targetVariant]: existing }));
+          setCaseStudy(existing);
+        } else {
+          setCaseStudy(null);
+        }
+      } catch {
+        setCaseStudy(null);
+      } finally {
+        setLoadingVariant(false);
+      }
+    } else {
+      setCaseStudy(null);
     }
   };
 
@@ -371,6 +552,7 @@ export default function App() {
     setError(null);
     if (shouldStopAndGenerate) {
       setGeneratingCaseStudy(true);
+      setGeneratingVariant("technical");
     }
 
     try {
@@ -385,8 +567,25 @@ export default function App() {
       // If user indicated "I have nothing more to add", automatically proceed for case study generation
       if (shouldStopAndGenerate) {
         setGeneratingCaseStudy(true);
-        const cs = await generateCaseStudy(selectedProject.id);
+        setGeneratingVariant("technical");
+        const cs = await generateCaseStudy(selectedProject.id, "technical");
+        setCaseStudiesMap((prev) => ({ ...prev, technical: cs }));
         setCaseStudy(cs);
+        setActiveVariant("technical");
+        setIsCaseStudyStep(true);
+
+        fetchAllCaseStudies(selectedProject.id)
+          .then((all) => {
+            if (Array.isArray(all)) {
+              const map = { technical: cs, client_brochure: null };
+              all.forEach((item) => {
+                if (item.variant_type) map[item.variant_type] = item;
+              });
+              map.technical = cs;
+              setCaseStudiesMap(map);
+            }
+          })
+          .catch(() => {});
       }
     } catch (err) {
       setError(err.message);
@@ -396,6 +595,7 @@ export default function App() {
     } finally {
       setLoading(false);
       setGeneratingCaseStudy(false);
+      setGeneratingVariant(null);
     }
   };
 
@@ -406,20 +606,8 @@ export default function App() {
     }
   };
 
-  const handleGenerateCaseStudy = async () => {
-    if (!selectedProject) return;
-    setLoading(true);
-    setGeneratingCaseStudy(true);
-    setError(null);
-    try {
-      const cs = await generateCaseStudy(selectedProject.id);
-      setCaseStudy(cs);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      setGeneratingCaseStudy(false);
-    }
+  const handleGenerateCaseStudy = async (variant = "technical") => {
+    return handleGenerateVariant(variant);
   };
 
   const handleContinueInterview = async () => {
@@ -459,11 +647,36 @@ export default function App() {
 
   return (
     <div className="wizard-layout">
-      {/* ─── Fixed Stepper Bar ─── */}
-      <StepperBar currentStep={currentStep} />
+      {/* ─── Top App Navbar with Authentication ─── */}
+      <Navbar
+        currentUser={currentUser}
+        onOpenAuth={handleOpenAuth}
+        onLogout={handleLogout}
+        onResetToHome={() => {
+          handleResetToHome();
+          setViewMode("wizard");
+        }}
+        viewMode={viewMode}
+        onViewChange={setViewMode}
+      />
 
-      {/* ─── Step Content Area ─── */}
-      <div className="step-content">
+      {viewMode === "dashboard" ? (
+        <main className="dashboard-main-wrapper">
+          <DashboardView
+            currentUser={currentUser}
+            onSelectProjectForInterview={handleDashboardSelectInterview}
+            onSelectProjectForCaseStudy={handleDashboardSelectCaseStudy}
+            onStartNewUpload={handleDashboardStartNewUpload}
+            onOpenAuth={handleOpenAuth}
+          />
+        </main>
+      ) : (
+        <>
+          {/* ─── Fixed Stepper Bar ─── */}
+          <StepperBar currentStep={currentStep} />
+
+          {/* ─── Step Content Area ─── */}
+          <div className="step-content">
         {/* Global Error Banner */}
         {error && (
           <div className="step-error-banner">
@@ -478,7 +691,7 @@ export default function App() {
             Step 1: Upload Resume
             ═══════════════════════════════════════════ */}
         {currentStep === 1 && (
-          <div className="step-panel step-upload">
+          <LandingPage>
             <div className="step-card-centered">
               <div className="step-icon-ring">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -544,7 +757,7 @@ export default function App() {
                 </div>
               </form>
             </div>
-          </div>
+          </LandingPage>
         )}
 
         {/* ═══════════════════════════════════════════
@@ -758,10 +971,18 @@ export default function App() {
                         <button
                           className="btn"
                           style={{ marginTop: "0.75rem", width: "100%" }}
-                          onClick={handleGenerateCaseStudy}
+                          onClick={() => handleGenerateVariant("technical")}
                           disabled={loading}
                         >
-                          {loading ? "Generating Case Study..." : "🚀 Generate Technical Case Study Now"}
+                          {loading && generatingVariant === "technical" ? "Generating Technical Case Study..." : "🚀 Generate Technical Case Study Now"}
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ marginTop: "0.45rem", width: "100%", borderColor: "rgba(56, 189, 248, 0.4)", color: "#38bdf8" }}
+                          onClick={() => handleGenerateVariant("client_brochure")}
+                          disabled={loading}
+                        >
+                          {loading && generatingVariant === "client_brochure" ? "Generating Client Brochure..." : "💼 Generate Client Brochure Now"}
                         </button>
 
                         {fulfilledCount < 8 && (
@@ -938,71 +1159,245 @@ export default function App() {
         )}
 
         {/* ═══════════════════════════════════════════
-            Step 4: Final Technical Case Study
+            Step 4: Final Technical Case Study & Client Brochure
             ═══════════════════════════════════════════ */}
-        {currentStep === 4 && caseStudy && (
+        {currentStep === 4 && (
           <div className="step-panel step-casestudy" ref={caseStudyRef}>
             <div className="step-header-bar">
               <button className="btn-back" onClick={() => goBackToStep(3)}>
                 ← Back to Interview
               </button>
-              <button
-                className="btn btn-secondary"
-                style={{ fontSize: "0.8rem", padding: "0.3rem 0.7rem" }}
-                onClick={() => setShowRawMarkdown(!showRawMarkdown)}
-              >
-                {showRawMarkdown ? "👁️ Formatted View" : "📝 Raw Markdown"}
-              </button>
+              {caseStudy && (
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: "0.8rem", padding: "0.3rem 0.7rem" }}
+                    onClick={() => handleGenerateVariant(activeVariant)}
+                    disabled={loading || loadingVariant}
+                    title="Regenerate this variant using the latest knowledge ledger"
+                  >
+                    🔄 Regenerate {activeVariant === "client_brochure" ? "Brochure" : "Case Study"}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: "0.8rem", padding: "0.3rem 0.7rem" }}
+                    onClick={() => setShowRawMarkdown(!showRawMarkdown)}
+                  >
+                    {showRawMarkdown ? "👁️ Formatted View" : "📝 Raw Markdown"}
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* Export Toolbar */}
-            <div className="export-bar">
-              <span style={{ fontSize: "0.85rem", color: "#94a3b8", fontWeight: 600, marginRight: "0.25rem" }}>
-                Download / Export:
-              </span>
-              <a
-                href={getCaseStudyExportUrl(selectedProject.id, "pdf")}
-                className="btn-export primary-export"
-                target="_blank"
-                rel="noopener noreferrer"
-                download
-              >
-                📄 Download PDF
-              </a>
-              <a
-                href={getCaseStudyExportUrl(selectedProject.id, "docx")}
-                className="btn-export"
-                target="_blank"
-                rel="noopener noreferrer"
-                download
-              >
-                📝 Download Word (.docx)
-              </a>
-              <a
-                href={getCaseStudyExportUrl(selectedProject.id, "md")}
-                className="btn-export"
-                target="_blank"
-                rel="noopener noreferrer"
-                download
-              >
-                📋 Download Markdown (.md)
-              </a>
-              <button
-                className="btn-export"
-                onClick={() => window.print()}
-              >
-                🖨️ Print / Save as PDF
-              </button>
+            {/* Audience Format Selector Tabs */}
+            <div className="audience-toggle-container">
+              <div className="audience-toggle-header">
+                <div>
+                  <span className="audience-eyebrow">AUDIENCE FORMAT SELECTOR</span>
+                  <h3 className="audience-title">Choose Output Perspective</h3>
+                </div>
+                <div className="audience-sync-pill" title="Both variants are generated from the exact same verified knowledge ledger facts.">
+                  <span className="sync-pulse-dot" />
+                  <span>Synced to Knowledge Ledger ({allEvidence.length} facts)</span>
+                </div>
+              </div>
+
+              <div className="audience-tabs">
+                <button
+                  type="button"
+                  className={`audience-tab-btn ${activeVariant === "technical" ? "active" : ""}`}
+                  onClick={() => handleSwitchAudience("technical")}
+                  disabled={loading || loadingVariant}
+                >
+                  <div className="tab-icon-wrapper technical-icon">🛠️</div>
+                  <div className="tab-text-wrapper">
+                    <div className="tab-title-row">
+                      <span className="tab-title">Technical Case Study</span>
+                      {caseStudiesMap.technical ? (
+                        <span className="tab-badge ready">✓ Ready</span>
+                      ) : (
+                        <span className="tab-badge pending">Available</span>
+                      )}
+                    </div>
+                    <span className="tab-subtext">Deep architectural analysis & engineering tradeoffs</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  className={`audience-tab-btn ${activeVariant === "client_brochure" ? "active" : ""}`}
+                  onClick={() => handleSwitchAudience("client_brochure")}
+                  disabled={loading || loadingVariant}
+                >
+                  <div className="tab-icon-wrapper brochure-icon">💼</div>
+                  <div className="tab-text-wrapper">
+                    <div className="tab-title-row">
+                      <span className="tab-title">Client Brochure</span>
+                      {caseStudiesMap.client_brochure ? (
+                        <span className="tab-badge ready">✓ Ready</span>
+                      ) : (
+                        <span className="tab-badge action">⚡ Generate</span>
+                      )}
+                    </div>
+                    <span className="tab-subtext">Executive summary, business ROI & client capabilities</span>
+                  </div>
+                </button>
+              </div>
             </div>
 
-            {showRawMarkdown ? (
-              <pre>{caseStudy.markdown_content}</pre>
-            ) : (
-              <MarkdownRenderer content={caseStudy.markdown_content} />
+            {/* Variant Loading State */}
+            {loadingVariant && (
+              <div className="variant-loading-card">
+                <span className="spinner" />
+                <span>Loading {activeVariant === "client_brochure" ? "Client Brochure" : "Technical Case Study"}...</span>
+              </div>
+            )}
+
+            {/* Variant Generating State */}
+            {!loadingVariant && loading && generatingVariant === activeVariant && (
+              <div className="variant-loading-card">
+                <span className="spinner" />
+                <span>
+                  Generating {activeVariant === "client_brochure" ? "Client Commercial Brochure" : "Technical Case Study"} from knowledge ledger...
+                </span>
+              </div>
+            )}
+
+            {/* If Current Variant is Available & Ready */}
+            {!loadingVariant && !(loading && generatingVariant === activeVariant) && caseStudy && (
+              <>
+                {/* Variant Context Banner */}
+                <div className={`variant-banner ${activeVariant === "client_brochure" ? "variant-brochure" : "variant-technical"}`}>
+                  <span className="variant-banner-icon">
+                    {activeVariant === "client_brochure" ? "💼" : "🛠️"}
+                  </span>
+                  <div>
+                    <strong>
+                      {activeVariant === "client_brochure" ? "Client-Facing Brochure" : "Deep Technical Case Study"}
+                    </strong>
+                    <span style={{ marginLeft: "0.5rem", opacity: 0.88 }}>
+                      {activeVariant === "client_brochure"
+                        ? "Curated for commercial clients, non-technical stakeholders, and executive leadership."
+                        : "Curated for engineering hiring managers, software architects, and technical leads."}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Export Toolbar */}
+                <div className="export-bar">
+                  <span style={{ fontSize: "0.85rem", color: "#94a3b8", fontWeight: 600, marginRight: "0.25rem" }}>
+                    Export ({activeVariant === "client_brochure" ? "Brochure" : "Technical"}):
+                  </span>
+                  <a
+                    href={getCaseStudyExportUrl(selectedProject.id, "pdf", activeVariant)}
+                    className="btn-export primary-export"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download
+                  >
+                    📄 Download PDF {activeVariant === "client_brochure" ? "(2-Page Flyer)" : ""}
+                  </a>
+                  <a
+                    href={getCaseStudyExportUrl(selectedProject.id, "docx", activeVariant)}
+                    className="btn-export"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download
+                  >
+                    📝 Download Word (.docx)
+                  </a>
+                  <a
+                    href={getCaseStudyExportUrl(selectedProject.id, "md", activeVariant)}
+                    className="btn-export"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download
+                  >
+                    📋 Download Markdown (.md)
+                  </a>
+                  <button
+                    className="btn-export"
+                    onClick={() => window.print()}
+                  >
+                    🖨️ Print / Save as PDF
+                  </button>
+                </div>
+
+                {showRawMarkdown ? (
+                  <pre>{caseStudy.markdown_content}</pre>
+                ) : (
+                  <MarkdownRenderer content={caseStudy.markdown_content} />
+                )}
+              </>
+            )}
+
+            {/* If Current Variant is NOT yet generated */}
+            {!loadingVariant && !(loading && generatingVariant === activeVariant) && !caseStudy && (
+              <div className="brochure-empty-state">
+                <div className="brochure-empty-icon">
+                  {activeVariant === "client_brochure" ? "💼" : "🛠️"}
+                </div>
+                <h3 className="brochure-empty-title">
+                  {activeVariant === "client_brochure"
+                    ? "Generate Client-Facing Commercial Brochure"
+                    : "Generate Deep Technical Case Study"}
+                </h3>
+                <p className="brochure-empty-desc">
+                  {activeVariant === "client_brochure"
+                    ? `Transform the verified engineering knowledge ledger for "${selectedProject?.name || "your project"}" into an executive-ready, 1-to-2 page commercial flyer designed for clients, investors, and business leaders.`
+                    : `Generate the comprehensive technical blueprint for "${selectedProject?.name || "your project"}" covering system architecture, decisions, tradeoffs, and failure modes.`}
+                </p>
+
+                {activeVariant === "client_brochure" && (
+                  <div className="brochure-highlights-grid">
+                    <div className="highlight-pill">
+                      <span className="hl-icon">📊</span>
+                      <div>
+                        <strong>Executive ROI Callout Boxes</strong>
+                        <span>Highlights scale, efficiency, latency, and customer savings</span>
+                      </div>
+                    </div>
+                    <div className="highlight-pill">
+                      <span className="hl-icon">🤝</span>
+                      <div>
+                        <strong>Client Problem & Solution Narrative</strong>
+                        <span>Explains business pain points and strategic capability delivery</span>
+                      </div>
+                    </div>
+                    <div className="highlight-pill">
+                      <span className="hl-icon">🖨️</span>
+                      <div>
+                        <strong>ReportLab 2-Page Flyer PDF</strong>
+                        <span>Branded header, sidebar metrics, and commercial presentation</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="btn btn-lg brochure-generate-btn"
+                  onClick={() => handleGenerateVariant(activeVariant)}
+                  disabled={loading}
+                >
+                  {loading && generatingVariant === activeVariant ? (
+                    <>
+                      <span className="spinner" />
+                      Generating...
+                    </>
+                  ) : activeVariant === "client_brochure" ? (
+                    "⚡ Generate Client Brochure Now"
+                  ) : (
+                    "🚀 Generate Technical Case Study Now"
+                  )}
+                </button>
+              </div>
             )}
           </div>
         )}
       </div>
+      </>
+    )}
 
       {/* Modal: Add Unlisted Project */}
       {showAddProjectModal && (
@@ -1178,6 +1573,14 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ─── Responsive Authentication Modal ─── */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={handleCloseAuth}
+        onAuthSuccess={handleAuthSuccess}
+        initialMode={authModalMode}
+      />
     </div>
   );
 }
