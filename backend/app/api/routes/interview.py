@@ -728,6 +728,8 @@ async def get_interview_status(
     knowledge_record = await project_repo.get_knowledge(project_id)
     knowledge = ProjectKnowledge.model_validate(knowledge_record.knowledge_json) if knowledge_record else None
 
+    pending_exchange = next((ex for ex in session.exchanges if ex.answer is None), None)
+
     return {
         "session_id": session.id,
         "project_id": session.project_id,
@@ -748,6 +750,12 @@ async def get_interview_status(
                 "answered_at": ex.answered_at.isoformat() if ex.answered_at else None
             }
             for ex in session.exchanges
-        ]
+        ],
+        "current_question": {
+            "exchange_id": pending_exchange.id,
+            "target_area": pending_exchange.target_area,
+            "question": pending_exchange.question,
+            "rationale": pending_exchange.rationale
+        } if pending_exchange else None
     }
 

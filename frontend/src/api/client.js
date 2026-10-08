@@ -64,15 +64,48 @@ export function setAuthSession(token, refreshToken, user) {
   if (user) sessionStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
+/* ─── Active Wizard State Persistence Helpers ─── */
+const WIZARD_STATE_KEY = "rcs_wizard_state";
+
+export function getStoredWizardState() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(WIZARD_STATE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredWizardState(state) {
+  if (typeof window === "undefined") return;
+  try {
+    if (!state) {
+      sessionStorage.removeItem(WIZARD_STATE_KEY);
+    } else {
+      sessionStorage.setItem(WIZARD_STATE_KEY, JSON.stringify(state));
+    }
+  } catch {}
+}
+
+export function clearStoredWizardState() {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(WIZARD_STATE_KEY);
+  } catch {}
+}
+
 export function clearAuthSession() {
   if (typeof window === "undefined") return;
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(REFRESH_TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(WIZARD_STATE_KEY);
   try {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(WIZARD_STATE_KEY);
   } catch {}
 }
 
@@ -116,16 +149,51 @@ export async function fetchCurrentUser() {
   const headers = getAuthHeaders();
   if (!headers.Authorization) return null;
 
-  const res = await fetch(`${API_BASE}/auth/me`, { headers });
-  if (!res.ok) {
-    clearAuthSession();
-    return null;
+  try {
+    const res = await fetch(`${API_BASE}/auth/me`, { headers });
+    if (res.ok) {
+      const user = await res.json();
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+      }
+      return user;
+    }
+
+    // If 401 Unauthorized, try refreshing access token before giving up
+    if (res.status === 401) {
+      const refreshToken = getStoredRefreshToken();
+      if (refreshToken) {
+        try {
+          const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          });
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json();
+            setAuthSession(
+              refreshData.access_token,
+              refreshData.refresh_token,
+              refreshData.user
+            );
+            return refreshData.user;
+          }
+        } catch {
+          // Token refresh attempt failed
+        }
+      }
+      // If refresh token is genuinely invalid or expired, clear session
+      clearAuthSession();
+      return null;
+    }
+
+    // For transient server errors (500, 502, 503, Render spin-up), do NOT log out!
+    return getStoredUser();
+  } catch (err) {
+    // Network fluctuation: retain existing stored session
+    console.warn("fetchCurrentUser network warning:", err);
+    return getStoredUser();
   }
-  const user = await res.json();
-  if (typeof window !== "undefined") {
-    sessionStorage.setItem(USER_KEY, JSON.stringify(user));
-  }
-  return user;
 }
 
 export function logoutUser() {

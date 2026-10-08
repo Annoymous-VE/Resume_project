@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   uploadResume,
   createProject,
+  fetchProjects,
+  fetchInterviewStatus,
   startInterview,
   submitAnswer,
   continueInterview,
@@ -11,7 +13,10 @@ import {
   getCaseStudyExportUrl,
   getStoredUser,
   fetchCurrentUser,
-  logoutUser
+  logoutUser,
+  getStoredWizardState,
+  setStoredWizardState,
+  clearStoredWizardState
 } from "./api/client";
 import LandingPage from "./LandingPage";
 import Navbar from "./components/Navbar";
@@ -158,29 +163,33 @@ function StepperBar({ currentStep }) {
 }
 
 export default function App() {
+  const savedWizard = getStoredWizardState();
+
   // Authentication States
   const [currentUser, setCurrentUser] = useState(() => getStoredUser());
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState("login");
-  const [viewMode, setViewMode] = useState("wizard"); // "wizard" | "dashboard"
+  const [viewMode, setViewMode] = useState(() => savedWizard?.viewMode || "wizard"); // "wizard" | "dashboard"
 
   const [file, setFile] = useState(null);
-  const [resumeId, setResumeId] = useState(null);
+  const [resumeId, setResumeId] = useState(() => savedWizard?.resumeId || null);
   const [loading, setLoading] = useState(false);
   const [generatingCaseStudy, setGeneratingCaseStudy] = useState(false);
-  const [projects, setProjects] = useState([]);
-  const [selectedProject, setSelectedProject] = useState(null);
-  const [interviewSession, setInterviewSession] = useState(null);
+  const [projects, setProjects] = useState(() => (Array.isArray(savedWizard?.projects) ? savedWizard.projects : []));
+  const [selectedProject, setSelectedProject] = useState(() => savedWizard?.selectedProject || null);
+  const [interviewSession, setInterviewSession] = useState(() => savedWizard?.interviewSession || null);
   const [answerInput, setAnswerInput] = useState("");
   const [pendingAnswer, setPendingAnswer] = useState(null);
-  const [caseStudy, setCaseStudy] = useState(null);
+  const [caseStudy, setCaseStudy] = useState(() => savedWizard?.caseStudy || null);
   const [error, setError] = useState(null);
   const [showRawMarkdown, setShowRawMarkdown] = useState(false);
 
   // Audience format states (Technical Case Study vs. Client Brochure)
-  const [activeVariant, setActiveVariant] = useState("technical");
-  const [caseStudiesMap, setCaseStudiesMap] = useState({ technical: null, client_brochure: null });
-  const [isCaseStudyStep, setIsCaseStudyStep] = useState(false);
+  const [activeVariant, setActiveVariant] = useState(() => savedWizard?.activeVariant || "technical");
+  const [caseStudiesMap, setCaseStudiesMap] = useState(
+    () => savedWizard?.caseStudiesMap || { technical: null, client_brochure: null }
+  );
+  const [isCaseStudyStep, setIsCaseStudyStep] = useState(() => !!savedWizard?.isCaseStudyStep);
   const [generatingVariant, setGeneratingVariant] = useState(null);
   const [loadingVariant, setLoadingVariant] = useState(false);
 
@@ -212,13 +221,96 @@ export default function App() {
     }
   }, [caseStudy]);
 
-  // Verify authenticated session on mount
+  // Persist active wizard state across page refreshes
+  useEffect(() => {
+    if (!currentUser) {
+      clearStoredWizardState();
+      return;
+    }
+    if (
+      projects.length > 0 ||
+      selectedProject ||
+      interviewSession ||
+      caseStudy ||
+      isCaseStudyStep ||
+      resumeId ||
+      viewMode === "dashboard"
+    ) {
+      setStoredWizardState({
+        viewMode,
+        resumeId,
+        projects,
+        selectedProject,
+        interviewSession,
+        isCaseStudyStep,
+        caseStudy,
+        caseStudiesMap,
+        activeVariant,
+      });
+    }
+  }, [
+    currentUser,
+    viewMode,
+    resumeId,
+    projects,
+    selectedProject,
+    interviewSession,
+    isCaseStudyStep,
+    caseStudy,
+    caseStudiesMap,
+    activeVariant,
+  ]);
+
+  // Verify authenticated session and sync active session data on mount
   useEffect(() => {
     fetchCurrentUser()
       .then((user) => {
         if (user) setCurrentUser(user);
       })
       .catch(() => {});
+
+    // If reloading while an interview was active, fetch the freshest status from the backend
+    if (selectedProject?.id && interviewSession) {
+      fetchInterviewStatus(selectedProject.id)
+        .then((fresh) => {
+          if (fresh && fresh.session_id) {
+            setInterviewSession((prev) => ({
+              ...prev,
+              ...fresh,
+            }));
+          }
+        })
+        .catch(() => {});
+    }
+
+    // If reloading while viewing a case study, refresh available variants
+    if (selectedProject?.id && isCaseStudyStep) {
+      fetchAllCaseStudies(selectedProject.id)
+        .then((all) => {
+          if (Array.isArray(all) && all.length > 0) {
+            const map = { technical: null, client_brochure: null };
+            all.forEach((item) => {
+              if (item.variant_type) map[item.variant_type] = item;
+            });
+            setCaseStudiesMap((prev) => ({ ...prev, ...map }));
+          }
+        })
+        .catch(() => {});
+    }
+
+    // If reloading in step 2 with a resumeId but empty projects
+    if (projects.length === 0 && resumeId) {
+      fetchProjects()
+        .then((allProjects) => {
+          if (Array.isArray(allProjects) && allProjects.length > 0) {
+            const matched = allProjects.filter((p) => p.resume_id === resumeId);
+            if (matched.length > 0) {
+              setProjects(matched);
+            }
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const handleOpenAuth = (mode = "login") => {
@@ -231,6 +323,7 @@ export default function App() {
   };
 
   const resetWizardState = () => {
+    clearStoredWizardState();
     setFile(null);
     setResumeId(null);
     setProjects([]);
@@ -257,6 +350,7 @@ export default function App() {
 
   const handleLogout = () => {
     logoutUser();
+    clearStoredWizardState();
     resetWizardState();
     setCurrentUser(null);
   };
@@ -445,9 +539,6 @@ export default function App() {
 
       setProjects((prev) => [newProject, ...prev]);
       setSelectedProject(newProject);
-      if (currentStep === 1) {
-        setCurrentStep(2);
-      }
       setShowAddProjectModal(false);
     } catch (err) {
       setAddProjectError(err.message || "Failed to create custom project.");
