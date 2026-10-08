@@ -79,7 +79,7 @@ async def start_interview(
         "project_id": project_id,
         "status": session.status,
         "round_count": session.round_count,
-        "coverage": session.coverage_json,
+        "coverage": coverage.model_dump(),
         "knowledge": knowledge.model_dump(),
         "evidence": [e.model_dump() for e in knowledge.evidence],
         "exchanges": [
@@ -425,6 +425,44 @@ async def answer_question(
         if ex.answer is not None
     ]
 
+    # Check if all 8 dimensions are now covered -> 100% completion
+    cov_dict = new_coverage.model_dump()
+    all_sufficient = all(cov_dict.get(a) == "SUFFICIENT" for a in interview_engine.AREA_PRIORITIES)
+    has_obstacle = interview_engine.has_concrete_obstacle(knowledge, new_coverage)
+    has_mitigation = interview_engine.has_concrete_mitigation(knowledge, new_coverage)
+
+    if all_sufficient and has_obstacle and has_mitigation:
+        session = await interview_repo.update_session_state(
+            session_id=session.id,
+            coverage_json=new_coverage.model_dump(),
+            round_increment=True,
+            status="completed",
+            stop_reason="All 8 technical dimensions are 100% completed."
+        )
+        session = await interview_repo.get_session_by_project(project_id)
+        return {
+            "session_id": session.id,
+            "status": "completed",
+            "round_count": session.round_count,
+            "coverage": session.coverage_json,
+            "knowledge": knowledge.model_dump() if knowledge else None,
+            "evidence": [e.model_dump() for e in knowledge.evidence] if knowledge else [],
+            "exchanges": [
+                {
+                    "id": ex.id,
+                    "question": ex.question,
+                    "target_area": ex.target_area,
+                    "rationale": ex.rationale,
+                    "answer": ex.answer,
+                    "created_at": ex.created_at.isoformat() if ex.created_at else None,
+                    "answered_at": ex.answered_at.isoformat() if ex.answered_at else None
+                }
+                for ex in session.exchanges
+            ],
+            "current_question": None,
+            "stop_reason": "All 8 technical dimensions are 100% completed."
+        }
+
     # Select next question or trigger stop
     next_res = await interview_engine.select_next_question(
         knowledge=knowledge,
@@ -546,7 +584,7 @@ async def continue_interview(
             "session_id": session.id,
             "status": "in_progress",
             "round_count": session.round_count,
-            "coverage": session.coverage_json,
+            "coverage": coverage.model_dump(),
             "knowledge": knowledge.model_dump() if knowledge else None,
             "evidence": [e.model_dump() for e in knowledge.evidence] if knowledge else [],
             "exchanges": [
@@ -570,7 +608,7 @@ async def continue_interview(
             "stop_reason": None
         }
 
-    # Find next question for unfulfilled criteria
+    # Find next question for unfulfilled criteria with force_continue=True
     history = [
         {"question": ex.question, "answer": ex.answer or "", "target_area": ex.target_area}
         for ex in session.exchanges
@@ -584,15 +622,24 @@ async def continue_interview(
         current_round=session.round_count + 1,
         latest_question=last_ex.question if last_ex else "Initial overview",
         latest_answer=last_ex.answer if last_ex and last_ex.answer else "Provided project details",
-        history=history
+        history=history,
+        force_continue=True
     )
 
     if not next_res.has_next_question or not next_res.question:
+        session = await interview_repo.update_session_state(
+            session_id=session.id,
+            coverage_json=coverage.model_dump(),
+            round_increment=False,
+            status="completed",
+            stop_reason="All 8 technical dimensions are 100% completed."
+        )
+        session = await interview_repo.get_session_by_project(project_id)
         return {
             "session_id": session.id,
             "status": "completed",
             "round_count": session.round_count,
-            "coverage": session.coverage_json,
+            "coverage": coverage.model_dump(),
             "knowledge": knowledge.model_dump() if knowledge else None,
             "evidence": [e.model_dump() for e in knowledge.evidence] if knowledge else [],
             "exchanges": [
@@ -608,7 +655,7 @@ async def continue_interview(
                 for ex in session.exchanges
             ],
             "current_question": None,
-            "stop_reason": "All technical dimensions are already covered."
+            "stop_reason": "All 8 technical dimensions are 100% completed."
         }
 
     next_q = next_res.question

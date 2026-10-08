@@ -72,14 +72,17 @@ class MockLLMClient(BaseLLMClient):
             if not ans_text:
                 ans_text = lines[-1] if lines else "Provided project details."
 
-            # Do not extract facts if the user is asking a question or requesting clarification
+            # Do not extract facts if the user is asking a question or requesting clarification / verifying understanding
+            from app.services.interview_engine import InterviewEngine
             ans_clean = ans_text.lower().strip()
             is_question_or_clarification = (
-                "?" in ans_clean
+                InterviewEngine.is_clarification_intent(ans_text)
+                or "?" in ans_clean
                 or any(phrase in ans_clean for phrase in [
                     "what do you mean", "can you explain", "could you explain", "don't understand",
                     "dont understand", "i'm confused", "im confused", "what does", "give me an example",
-                    "what should i", "how should i", "what part", "help me", "rephrase", "simplify"
+                    "what should i", "how should i", "what part", "help me", "rephrase", "simplify",
+                    "do you mean", "are you asking", "is this about", "does this refer"
                 ])
             )
             if is_question_or_clarification:
@@ -146,7 +149,7 @@ class MockLLMClient(BaseLLMClient):
 
             # Extract target area from prompt if present
             target = "challenges"
-            match = re.search(r"(?:Primary Missing Area to Target|Target the missing area|Focus Area):\s*(\w+)", prompt, re.IGNORECASE)
+            match = re.search(r"(?:Primary Missing Area to Target|Primary Topic to Explore|Target Topic to Explore|Target the missing area|Focus Area):\s*(\w+)", prompt, re.IGNORECASE)
             if not match:
                 match = re.search(r"target_area:\s*(\w+)", prompt, re.IGNORECASE)
             if match:
@@ -162,18 +165,23 @@ class MockLLMClient(BaseLLMClient):
                         "database locks, slow queries, or third-party integration bugs. Which of these did you experience?"
                     )
                 else:
-                    q_text = (
-                        "In real-world engineering, virtually no system is built without friction. "
-                        "What were the key obstacles, architectural bottlenecks, or failure modes you encountered, "
-                        "and what specific measures did you take to overcome them?"
-                    )
+                    q_text = "That makes sense. When building this out, what was the trickiest technical hurdle or bottleneck you ran into?"
             elif target == "solutions":
-                q_text = (
-                    "In real-world engineering, overcoming friction requires concrete technical intervention. "
-                    "What specific measures, architectural mitigations, or optimizations did you implement to overcome those obstacles?"
-                )
+                q_text = "Got it. How did you end up solving or working around that hurdle?"
+            elif target == "technical_decisions":
+                q_text = "Makes sense. What was the main reason you chose this tech stack over other alternatives?"
+            elif target == "architecture":
+                q_text = "Understood. At a high level, how does data flow end-to-end between your core components?"
+            elif target == "tradeoffs":
+                q_text = "Got it. Were there any technical downsides or compromises with this setup that you had to accept?"
+            elif target == "performance":
+                q_text = "That's clear. Did you measure or notice any specific latency or throughput numbers, even rough ballpark figures?"
+            elif target == "impact":
+                q_text = "Makes sense. Once this was deployed, what was the most meaningful impact or outcome it delivered?"
+            elif target == "problem":
+                q_text = "To start with, what was the core user problem or bottleneck this project was created to solve?"
             else:
-                q_text = f"Could you explain the specific technical mechanisms and implementation details for {target}?"
+                q_text = f"Could you share a bit more detail about how you handled {target}?"
 
             return schema(
                 has_next_question=True,
@@ -233,6 +241,10 @@ class MockLLMClient(BaseLLMClient):
         return schema()
 
     async def generate_text(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if (system_prompt and "clarification" in system_prompt.lower()) or "clarification" in prompt.lower() or "developer asked for clarification" in prompt.lower():
+            if "do you mean" in prompt.lower() or "redis" in prompt.lower():
+                return "Yes, exactly! I'm curious what caching setup you chose and what motivated that decision. Feel free to explain whenever you're ready!"
+            return "Happy to clarify! What I mean is simply what real-world issue your project solved and why existing tools weren't enough. Feel free to explain in your own words whenever you're ready!"
         return "# Technical Case Study\n\n## Overview\nGenerated technical case study analysis."
 
 def _clean_schema_dict(d: Any) -> Any:

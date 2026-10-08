@@ -984,10 +984,21 @@ export default function App() {
                       <div className="bot-avatar" style={{ background: "linear-gradient(135deg, #059669, #34d399)" }}>✓</div>
                       <div className="bubble-ai" style={{ borderLeft: "3px solid #34d399" }}>
                         <span className="target-badge" style={{ color: "#34d399", background: "rgba(16, 185, 129, 0.15)", borderColor: "rgba(16, 185, 129, 0.4)" }}>
-                          Interview Complete
+                          {fulfilledCount >= 8 ? "Interview 100% Complete" : "Interview Complete"}
                         </span>
-                        <p style={{ margin: "0.25rem 0" }}>
-                          🎉 {interviewSession.stop_reason || "All essential technical dimensions have been captured."}
+                        <p style={{ margin: "0.25rem 0", lineHeight: 1.5 }}>
+                          {fulfilledCount >= 8 ? (
+                            <>🎉 <strong>All 8 technical dimensions are 100% completed!</strong> All {allEvidence.length} verified facts from your resume and interview exchanges have been captured and synchronized. Ready to generate your comprehensive case studies based on this complete interview.</>
+                          ) : (
+                            <>
+                              ✅ {interviewSession.stop_reason ? (
+                                interviewSession.stop_reason.includes("Concluded by user")
+                                  ? interviewSession.stop_reason
+                                  : `${fulfilledCount}/8 technical dimensions covered.`
+                              ) : `${fulfilledCount}/8 technical dimensions covered.`}{" "}
+                              You can generate case studies now based on all captured answers ({conversationFacts.length} interview facts), or continue the interview to complete remaining topics.
+                            </>
+                          )}
                         </p>
                         <button
                           className="btn"
@@ -1037,6 +1048,14 @@ export default function App() {
                     <button
                       type="button"
                       className="quick-chip"
+                      style={{ borderColor: "rgba(56, 189, 248, 0.4)", color: "#38bdf8" }}
+                      onClick={() => handleSubmitAnswer("Can you explain what this question is asking, with a simple example?")}
+                    >
+                      ❓ Explain question
+                    </button>
+                    <button
+                      type="button"
+                      className="quick-chip"
                       onClick={() => handleSubmitAnswer("Skip this question for now.")}
                     >
                       ⏭️ Skip topic
@@ -1075,7 +1094,7 @@ export default function App() {
                       value={answerInput}
                       onChange={(e) => setAnswerInput(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      placeholder="Type your answer... (Enter to send, Shift+Enter for newline)"
+                      placeholder="Type your answer, or ask to clarify/verify... (Enter to send, Shift+Enter for newline)"
                       disabled={loading}
                     />
                     <button

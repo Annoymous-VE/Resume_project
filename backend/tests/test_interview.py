@@ -164,8 +164,8 @@ async def test_mandatory_obstacle_phase_gate():
 
 @pytest.mark.asyncio
 async def test_targeted_probing_prompt_for_obstacles():
-    """Verify that question generation and fallback mechanisms explicitly ask the targeted
-    real-world engineering friction and obstacle probing question."""
+    """Verify that question generation and fallback mechanisms ask focused, conversational
+    obstacle probing questions without robotic compound phrases."""
     llm = MockLLMClient()
     engine = InterviewEngine(llm)
 
@@ -196,12 +196,11 @@ async def test_targeted_probing_prompt_for_obstacles():
     )
     assert res.has_next_question is True
     assert res.question.target_area == "challenges"
-    expected_probing_text = (
-        "In real-world engineering, virtually no system is built without friction. "
-        "What were the key obstacles, architectural bottlenecks, or failure modes you encountered, "
-        "and what specific measures did you take to overcome them?"
-    )
-    assert expected_probing_text in res.question.question
+    # Probes for real technical hurdles/bottlenecks in a natural, focused way
+    assert any(w in res.question.question.lower() for w in ["hurdle", "bottleneck", "obstacle", "challenge"])
+    # Strictly ONE question — never compound
+    assert res.question.question.count("?") == 1
+    assert "and what specific measures did you take" not in res.question.question.lower()
 
     # 2. Test fallback question when LLM is unavailable or fails
     failing_engine = InterviewEngine(llm_client=None)
@@ -215,8 +214,8 @@ async def test_targeted_probing_prompt_for_obstacles():
     )
     assert fallback_res.has_next_question is True
     assert fallback_res.question.target_area == "challenges"
-    assert "In real-world engineering, virtually no system is built without friction." in fallback_res.question.question
-    assert "What were the key obstacles, architectural bottlenecks, or failure modes you encountered" in fallback_res.question.question
+    assert any(w in fallback_res.question.question.lower() for w in ["hurdle", "bottleneck", "obstacle", "challenge"])
+    assert fallback_res.question.question.count("?") == 1
 
     # 3. Test clarification fallback for challenges
     clarify_res = await failing_engine.generate_clarification_response(
@@ -226,7 +225,9 @@ async def test_targeted_probing_prompt_for_obstacles():
         user_query="what do you mean?",
         technologies=knowledge.technologies
     )
-    assert "In real-world engineering, virtually no system is built without friction." in clarify_res.question
+    assert "friction" in clarify_res.question.lower() or "hurdle" in clarify_res.question.lower() or "bug" in clarify_res.question.lower()
+    # Does NOT ask compound question or next question
+    assert "in real-world engineering, virtually no system is built without friction" not in clarify_res.question.lower()
 
 @pytest.mark.asyncio
 async def test_fallback_escalation_for_superficial_answers():
@@ -355,6 +356,189 @@ async def test_structured_obstacle_mitigation_pairs_extraction():
         exchange_id="ex_fallback_2"
     )
     assert fallback_knowledge.obstacle_mitigations[-1].measures_taken == "Implemented exponential backoff with jitter and Redis caching."
+
+
+@pytest.mark.asyncio
+async def test_verification_and_clarification_intent_detection():
+    """Verify that InterviewEngine reliably identifies verification questions (e.g. 'Do you mean X?')
+    and explanation requests, while keeping real answers as non-clarification."""
+    # 1. Verification of understanding queries
+    assert InterviewEngine.is_clarification_intent("Do you mean whether we used Redis or PostgreSQL?") is True
+    assert InterviewEngine.is_clarification_intent("So you mean our database cache?") is True
+    assert InterviewEngine.is_clarification_intent("Are you asking about the frontend or the backend API?") is True
+    assert InterviewEngine.is_clarification_intent("Is this about our deployment architecture?") is True
+    assert InterviewEngine.is_clarification_intent("Does this refer to database query latency?") is True
+    assert InterviewEngine.is_clarification_intent("Am I understanding correctly that you want to know about our data flow?") is True
+    assert InterviewEngine.is_clarification_intent("Just to clarify, should I talk about caching?") is True
+    assert InterviewEngine.is_clarification_intent("Meaning how requests travel between microservices?") is True
+    assert InterviewEngine.is_clarification_intent("Like whether we used Celery or RabbitMQ?") is True
+    assert InterviewEngine.is_clarification_intent("what do you mean by that?") is True
+    assert InterviewEngine.is_clarification_intent("Can you explain in simple terms?") is True
+    assert InterviewEngine.is_clarification_intent("Could you give me an example?") is True
+
+    # 2. Real technical answers should NOT be detected as clarification
+    assert InterviewEngine.is_clarification_intent("We used Redis for caching session tokens.") is False
+    assert InterviewEngine.is_clarification_intent("I built a microservices architecture using FastAPI and Docker.") is False
+    assert InterviewEngine.is_clarification_intent("The biggest hurdle was thread contention under 10k concurrent requests.") is False
+    assert InterviewEngine.is_clarification_intent("We chose Go because of its lightweight concurrency and goroutines.") is False
+    assert InterviewEngine.is_clarification_intent("Latency was reduced from 800ms down to 45ms after indexing.") is False
+
+
+@pytest.mark.asyncio
+async def test_clarification_response_verifies_without_next_question():
+    """Verify that clarification and verification responses directly address the user's inquiry,
+    remain short/mid-sized, and NEVER introduce the next question or unrelated topics."""
+    engine = InterviewEngine(llm_client=None)
+
+    # 1. User verifying understanding: "Do you mean whether we used Redis?"
+    res_verify = await engine.generate_clarification_response(
+        project_name="Order Processor",
+        target_area="technical_decisions",
+        original_question="What made you choose this stack?",
+        user_query="Do you mean whether we used Redis or PostgreSQL?",
+        technologies=["Python", "Redis", "PostgreSQL"]
+    )
+
+    # Confirm it directly addresses verification
+    assert res_verify.question.startswith("Yes, exactly!")
+    # Stays on the same target area
+    assert res_verify.target_area == "technical_decisions"
+    # Does NOT ask the next question or ask a compound question
+    assert "In real-world engineering" not in res_verify.question
+    assert "What were the key obstacles" not in res_verify.question
+    # Length is concise (less than 400 characters)
+    assert len(res_verify.question) < 400
+
+    # 2. General explanation request
+    res_explain = await engine.generate_clarification_response(
+        project_name="Order Processor",
+        target_area="architecture",
+        original_question="How does data flow end-to-end?",
+        user_query="Can you explain what you mean?",
+        technologies=["Python", "FastAPI"]
+    )
+    assert "whiteboard sketch" in res_explain.question or "building blocks" in res_explain.question
+    assert res_explain.target_area == "architecture"
+
+
+@pytest.mark.asyncio
+async def test_single_question_conversational_probing():
+    """Verify that question generation produces strictly ONE focused question per turn."""
+    engine = InterviewEngine(llm_client=None)
+    knowledge = ProjectKnowledge(
+        project_id="test_single",
+        project_name="Streaming Gateway",
+        technologies=["Go", "Kafka"]
+    )
+    coverage = KnowledgeCoverage(
+        problem=CoverageLevel.SUFFICIENT,
+        architecture=CoverageLevel.SUFFICIENT,
+        technical_decisions=CoverageLevel.UNKNOWN,
+        challenges=CoverageLevel.UNKNOWN,
+        solutions=CoverageLevel.UNKNOWN,
+        tradeoffs=CoverageLevel.UNKNOWN,
+        performance=CoverageLevel.UNKNOWN,
+        impact=CoverageLevel.UNKNOWN
+    )
+
+    res = await engine.select_next_question(
+        knowledge=knowledge,
+        coverage=coverage,
+        current_round=2,
+        latest_question="How does data flow?",
+        latest_answer="Data moves from HTTP handlers into a Kafka producer with gzip compression.",
+        history=[]
+    )
+
+    assert res.has_next_question is True
+    # Exactly one question mark
+    assert res.question.question.count("?") == 1
+    # No compound questions
+    assert " and what " not in res.question.question.lower()
+
+
+@pytest.mark.asyncio
+async def test_continue_interview_resumes_to_100_percent():
+    """Verify that force_continue=True resumes an interview to gather remaining missing topics
+    and terminates at 100% completion when all 8 dimensions are sufficient."""
+    engine = InterviewEngine(llm_client=None)
+    km = KnowledgeManager(llm_client=None)
+
+    # 1. Setup knowledge with 7/8 dimensions SUFFICIENT and 1 missing (impact)
+    knowledge = ProjectKnowledge(
+        project_id="test_100_pct",
+        project_name="Fintech Ledger",
+        technologies=["Go", "PostgreSQL", "Kafka"],
+        technical_decisions=["Chose PostgreSQL for ACID compliance in financial balances"],
+        challenges=["Deadlock under high volume concurrent debit transactions"],
+        solutions=["Introduced account-level advisory locks before balance updates"],
+        tradeoffs=["Serializing accounts lowers concurrency for shared accounts"],
+        performance=["Processed 12,000 tx/sec with p99 latency under 25ms"],
+        impact=[]  # Missing impact
+    )
+    knowledge.problem.statement = "Financial transactions experienced balance inconsistencies."
+    knowledge.problem.context = "During flash sale events thousands of concurrent debits caused race conditions."
+    knowledge.architecture.overview = "Microservice architecture using Go and PostgreSQL."
+    knowledge.architecture.components = ["Ledger API", "Event Stream", "Audit Store"]
+
+    coverage = km.compute_coverage(knowledge)
+    cov_dict = coverage.model_dump()
+    assert cov_dict["impact"] == CoverageLevel.UNKNOWN
+    assert sum(1 for v in cov_dict.values() if v == CoverageLevel.SUFFICIENT.value) == 7
+
+    # 2. Standard call at round 6 stops early due to high completeness (7/8)
+    standard_res = await engine.select_next_question(
+        knowledge=knowledge,
+        coverage=coverage,
+        current_round=6,
+        latest_question="What performance metrics did you measure?",
+        latest_answer="12k tx/sec with 25ms latency",
+        history=[],
+        force_continue=False
+    )
+    assert standard_res.has_next_question is False
+
+    # 3. Continued call with force_continue=True OVERRIDES early stop and targets missing dimension (impact)
+    continue_res = await engine.select_next_question(
+        knowledge=knowledge,
+        coverage=coverage,
+        current_round=6,
+        latest_question="What performance metrics did you measure?",
+        latest_answer="12k tx/sec with 25ms latency",
+        history=[],
+        force_continue=True
+    )
+    assert continue_res.has_next_question is True
+    assert continue_res.question.target_area == "impact"
+
+    # 4. Answer the missing impact question
+    knowledge = km.merge_answer(
+        current_knowledge=knowledge,
+        target_area="impact",
+        answer_text="Eliminated 100% of ledger reconciliation errors and prevented over $2M in financial leakage.",
+        exchange_id="ex_impact"
+    )
+
+    # 5. Recompute coverage: Now 8/8 dimensions SUFFICIENT (100% complete)
+    updated_coverage = km.compute_coverage(knowledge)
+    updated_cov_dict = updated_coverage.model_dump()
+    assert updated_cov_dict["impact"] == CoverageLevel.SUFFICIENT
+    assert sum(1 for v in updated_cov_dict.values() if v == CoverageLevel.SUFFICIENT.value) == 8
+
+    # 6. Now select_next_question returns has_next_question=False and declares 100% completion
+    final_res = await engine.select_next_question(
+        knowledge=knowledge,
+        coverage=updated_coverage,
+        current_round=7,
+        latest_question=continue_res.question.question,
+        latest_answer="Eliminated 100% of ledger reconciliation errors and prevented $2M leakage.",
+        history=[],
+        force_continue=True
+    )
+    assert final_res.has_next_question is False
+    assert "100%" in final_res.stop_reason
+
+
 
 
 

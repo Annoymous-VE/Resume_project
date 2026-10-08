@@ -29,9 +29,14 @@ async def get_dashboard(
         interview = None
         if p.interview_session:
             cov = p.interview_session.coverage_json or {}
-            sufficient_count = sum(1 for v in cov.values() if v == "SUFFICIENT")
-            total_dims = len(cov) if cov else 8
-            percent = int((sufficient_count / total_dims) * 100) if total_dims else 0
+            STANDARD_AREAS = [
+                "problem", "architecture", "technical_decisions",
+                "challenges", "solutions", "tradeoffs", "performance", "impact"
+            ]
+            sufficient_count = sum(1 for a in STANDARD_AREAS if cov.get(a) == "SUFFICIENT")
+            percent = int((sufficient_count / len(STANDARD_AREAS)) * 100)
+            if percent >= 100 or sufficient_count >= len(STANDARD_AREAS):
+                percent = 100
             if p.interview_session.status == "completed":
                 completed_interviews_count += 1
 
@@ -54,6 +59,8 @@ async def get_dashboard(
                 "round_count": p.interview_session.round_count,
                 "stop_reason": p.interview_session.stop_reason,
                 "coverage_percent": percent,
+                "fulfilled_count": sufficient_count,
+                "total_dimensions": len(STANDARD_AREAS),
                 "coverage": cov,
                 "exchanges": exchanges,
                 "created_at": p.interview_session.created_at.isoformat() if p.interview_session.created_at else None,

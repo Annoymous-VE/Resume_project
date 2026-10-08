@@ -348,6 +348,8 @@ export default function DashboardView({
                 const status = p.interview?.status || "not_started";
                 const hasCaseStudy = p.case_studies && p.case_studies.length > 0;
                 const exchangesCount = p.interview?.exchanges?.length || 0;
+                const coveragePercent = p.interview?.coverage_percent || 0;
+                const is100Percent = coveragePercent >= 100 || (p.interview?.fulfilled_count >= 8);
 
                 return (
                   <div key={p.id} className="dash-project-card">
@@ -358,7 +360,9 @@ export default function DashboardView({
                       </span>
                       <span className={`dash-status-badge ${status}`}>
                         {status === "completed"
-                          ? "✓ Completed"
+                          ? is100Percent
+                            ? "✓ 100% Completed"
+                            : `✓ Completed (${coveragePercent}%)`
                           : status === "in_progress"
                           ? `● Round ${p.interview?.round_count || 1}`
                           : "○ Not Started"}
@@ -390,12 +394,17 @@ export default function DashboardView({
                       <div className="dash-interview-progress-bar-wrap">
                         <div className="dash-progress-label-row">
                           <span>Interview Coverage</span>
-                          <span>{p.interview?.coverage_percent || 0}%</span>
+                          <span style={is100Percent ? { color: "#34d399", fontWeight: 700 } : {}}>
+                            {is100Percent ? "100%" : `${coveragePercent}%`}
+                          </span>
                         </div>
                         <div className="dash-progress-track">
                           <div
                             className="dash-progress-fill"
-                            style={{ width: `${p.interview?.coverage_percent || 0}%` }}
+                            style={{
+                              width: `${is100Percent ? 100 : coveragePercent}%`,
+                              background: is100Percent ? "linear-gradient(90deg, #10b981, #34d399)" : undefined
+                            }}
                           />
                         </div>
                       </div>
@@ -423,7 +432,15 @@ export default function DashboardView({
                         >
                           View Case Study
                         </button>
-                      ) : status === "in_progress" ? (
+                      ) : is100Percent ? (
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => onSelectProjectForInterview(p)}
+                        >
+                          Generate Case Study
+                        </button>
+                      ) : status === "in_progress" || (status === "completed" && !is100Percent) ? (
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
@@ -659,17 +676,35 @@ export default function DashboardView({
               >
                 Close
               </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  const proj = viewTranscriptProject;
-                  setViewTranscriptProject(null);
-                  onSelectProjectForInterview(proj);
-                }}
-              >
-                Continue Interview →
-              </button>
+              {!(viewTranscriptProject?.interview?.coverage_percent >= 100 || viewTranscriptProject?.interview?.fulfilled_count >= 8) ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const proj = viewTranscriptProject;
+                    setViewTranscriptProject(null);
+                    onSelectProjectForInterview(proj);
+                  }}
+                >
+                  Resume Interview →
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const proj = viewTranscriptProject;
+                    setViewTranscriptProject(null);
+                    if (proj.case_studies && proj.case_studies.length > 0) {
+                      onSelectProjectForCaseStudy(proj);
+                    } else {
+                      onSelectProjectForInterview(proj);
+                    }
+                  }}
+                >
+                  {viewTranscriptProject.case_studies && viewTranscriptProject.case_studies.length > 0 ? "View Case Study →" : "Generate Case Study →"}
+                </button>
+              )}
             </div>
           </div>
         </div>

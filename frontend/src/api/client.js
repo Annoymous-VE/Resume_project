@@ -28,20 +28,29 @@ export function getApiBase() {
 export const API_BASE = getApiBase();
 
 /* ─── Auth Session Storage Helpers ─── */
+// Clean any legacy persistent credentials so fresh visits always land on the standard page
+if (typeof window !== "undefined") {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  } catch {}
+}
+
 export function getStoredToken() {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function getStoredRefreshToken() {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+  return sessionStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
 export function getStoredUser() {
   if (typeof window === "undefined") return null;
   try {
-    const u = localStorage.getItem(USER_KEY);
+    const u = sessionStorage.getItem(USER_KEY);
     return u ? JSON.parse(u) : null;
   } catch {
     return null;
@@ -50,16 +59,21 @@ export function getStoredUser() {
 
 export function setAuthSession(token, refreshToken, user) {
   if (typeof window === "undefined") return;
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-  if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (token) sessionStorage.setItem(TOKEN_KEY, token);
+  if (refreshToken) sessionStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  if (user) sessionStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function clearAuthSession() {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+  sessionStorage.removeItem(USER_KEY);
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  } catch {}
 }
 
 export function getAuthHeaders() {
@@ -109,7 +123,7 @@ export async function fetchCurrentUser() {
   }
   const user = await res.json();
   if (typeof window !== "undefined") {
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    sessionStorage.setItem(USER_KEY, JSON.stringify(user));
   }
   return user;
 }

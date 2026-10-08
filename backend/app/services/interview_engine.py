@@ -50,12 +50,13 @@ class InterviewEngine:
 
     @staticmethod
     def is_clarification_intent(text: str) -> bool:
-        """Detect whether the user is asking for clarification, explanation, or expressing confusion."""
+        """Detect whether the user is asking for clarification, explanation, or verifying their understanding."""
         if not text:
             return False
         clean = text.strip().lower()
 
         clarification_patterns = [
+            # Direct requests for explanation / clarification
             r"what do you mean",
             r"what does .* mean",
             r"what do you want to know",
@@ -66,6 +67,7 @@ class InterviewEngine:
             r"please explain",
             r"explain this",
             r"explain it",
+            r"explain what",
             r"explain in simple",
             r"don'?t understand",
             r"do not understand",
@@ -90,20 +92,44 @@ class InterviewEngine:
             r"simplify",
             r"in simple words",
             r"in plain terms",
+            r"help me understand",
             r"help me",
             r"what are alternatives",
             r"what is alternative",
             r"why do you ask",
             r"huh\?",
             r"pardon\?",
+            # Verification of understanding / confirmation inquiries
+            r"^(?:so\s+)?(?:do\s+you|you)\s+mean\b",
+            r"^(?:are\s+you|you\s+are)\s+(?:asking|looking for|referring to|inquiring about)\b",
+            r"^is\s+(?:this|that)\s+(?:about|asking|referring to|related to)\b",
+            r"^does\s+(?:this|that)\s+(?:mean|refer to)\b",
+            r"^am\s+i\s+(?:understanding|getting)(?:\s+(?:this|it))?\s+(?:right|correctly)\b",
+            r"\bam\s+i\s+understanding\b",
+            r"^(?:is\s+my|my)\s+understanding\s+(?:correct|right)\b",
+            r"^correct\s+me\s+if\s+i'?m\s+wrong\b",
+            r"^(?:just\s+to\s+)?(?:clarify|confirm)\b",
+            r"^(?:should|can|could)\s+i\s+(?:talk|mention|explain|focus|write)\s+about\b",
+            r"^meaning\s*[:?]?\s*",
+            r"^would\s+that\s+be\b",
+            r"^like\s+(?:whether|if)\s+we\b",
+            r"\byou\s+mean\b",
+            r"\bmean\s+by\b",
+            r"\brefer\s+to\b",
+            r"\breferring\s+to\b",
+            r"\basking\s+about\b",
+            r"\blooking\s+for\b"
         ]
         for pattern in clarification_patterns:
             if re.search(pattern, clean):
                 return True
 
-        # If it's a short question ending in ? and has inquiry words
-        if clean.endswith("?") and len(clean.split()) <= 12:
-            if any(w in clean for w in ["what", "why", "how", "which", "who", "can you", "could you", "mean"]):
+        # If it's a short/mid-sized question ending in ? and has inquiry or verification words
+        if clean.endswith("?") and len(clean.split()) <= 25:
+            if any(w in clean for w in [
+                "what", "why", "how", "which", "who", "can you", "could you", "mean",
+                "asking", "looking for", "example", "refer", "referring", "explain", "clarify"
+            ]):
                 return True
 
         return False
@@ -260,63 +286,118 @@ class InterviewEngine:
                     system_prompt=CLARIFICATION_SYSTEM_PROMPT
                 )
                 clean_text = text.strip()
-                if clean_text and len(clean_text) > 15:
+                if clean_text and len(clean_text) > 15 and not clean_text.startswith("#"):
                     return GeneratedQuestion(
                         id=f"clarify_{target_area}_{uuid.uuid4().hex[:6]}",
                         target_area=target_area,
                         question=clean_text,
-                        rationale=f"Explaining {target_area} in simple terms to help you answer."
+                        rationale="Clarification & guidance — share your thoughts whenever you're ready."
                     )
             except Exception:
                 pass
 
-        # Rich, friendly fallback clarifications tailored to the target area & stack
+        # Check if the user is verifying their understanding (and not just asking "what do you mean?")
+        uq_clean = user_query.strip().lower()
+        is_verification = False
+        if not re.search(r"\b(?:what|explain)\s+(?:do\s+you|you)\s+mean\b", uq_clean):
+            verification_patterns = [
+                r"^(?:so\s+)?(?:do\s+you|you)\s+mean\b",
+                r"^(?:are\s+you|you\s+are)\s+(?:asking|looking for|referring to)\b",
+                r"^is\s+(?:this|that)\s+(?:about|asking|referring to)\b",
+                r"^does\s+(?:this|that)\s+(?:mean|refer to)\b",
+                r"^am\s+i\s+(?:understanding|getting)\b",
+                r"^(?:is\s+my|my)\s+understanding\b",
+                r"^correct\s+me\b",
+                r"\bdo\s+you\s+mean\b",
+                r"\bare\s+you\s+asking\b",
+                r"\bis\s+this\s+about\b",
+            ]
+            is_verification = any(re.search(p, uq_clean) for p in verification_patterns)
+
+        if is_verification:
+            verification_clarifications = {
+                "technical_decisions": (
+                    f"Yes, exactly! I'm curious what led you to pick {tech_str} over other alternatives for {project_name}. "
+                    f"Even a brief reason like performance, built-in features, or familiarity works great. "
+                    f"Take your time and share whenever you're ready!"
+                ),
+                "problem": (
+                    f"Yes, exactly! I'm interested in the core pain point or user problem that motivated {project_name}, "
+                    f"and why existing solutions weren't enough. Feel free to explain in your own words!"
+                ),
+                "architecture": (
+                    f"Yes, that's right! I'm looking for a high-level picture of how the components in {project_name} "
+                    f"talk to each other (for instance, frontend -> API -> {tech_str} -> database). "
+                    f"A brief walkthrough is plenty!"
+                ),
+                "challenges": (
+                    f"Yes, exactly! I'm asking about the trickiest technical hurdle or unexpected bug you ran into while working with {tech_str}. "
+                    f"For example, slow queries, concurrency issues, or third-party limits. Whenever you're ready, share what you encountered!"
+                ),
+                "solutions": (
+                    f"Yes, spot on! I'm curious how you resolved or worked around that hurdle—such as adding caching, optimizing code, "
+                    f"or tweaking architecture. Feel free to describe whatever steps you took!"
+                ),
+                "tradeoffs": (
+                    f"Yes, exactly! In engineering, every technical choice comes with pros and cons. "
+                    f"I'm curious about any downsides or compromises you had to accept with {tech_str}."
+                ),
+                "performance": (
+                    f"Yes, exactly! Any ballpark figures on speed, throughput, or capacity (like response times or handled requests), "
+                    f"or even general observations like 'noticeably faster' are great."
+                ),
+                "impact": (
+                    f"Yes, that's right! What was the tangible result or benefit once {project_name} went live—like saving time, "
+                    f"handling user traffic, or automating manual work?"
+                )
+            }
+            if target_area in verification_clarifications:
+                return GeneratedQuestion(
+                    id=f"clarify_{target_area}_{uuid.uuid4().hex[:6]}",
+                    target_area=target_area,
+                    question=verification_clarifications[target_area],
+                    rationale="Confirming your understanding and clarifying the question."
+                )
+
+        # Friendly, supportive general explanations tailored to the area
         fallback_clarifications = {
             "technical_decisions": (
-                f"No worries at all! In simple words: out of all the tools and frameworks out there, "
-                f"what made you decide to use {tech_str}? For example, did you choose it for reliability, "
-                f"built-in features, team familiarity, or because it solved a specific need? "
-                f"Even a brief reason works great, or let me know what part feels unclear!"
+                f"No worries at all! In plain words: out of all the tools out there, what made you choose {tech_str} for {project_name}? "
+                f"For example, was it for speed, ease of use, team familiarity, or a specific feature? A quick reason is plenty!"
             ),
             "problem": (
-                f"Happy to explain! In plain terms: what real-world headache or manual hassle "
-                f"was {project_name} built to solve? Who was experiencing the problem, and why couldn't "
-                f"existing tools do the job? Feel free to share in your own everyday words!"
+                f"Happy to explain! In simple terms: what real-world headache or manual hassle was {project_name} built to solve, "
+                f"and why couldn't existing tools handle it? Feel free to share in everyday words."
             ),
             "architecture": (
-                f"No problem! What I mean is: if you had to draw a simple whiteboard sketch of {project_name}, "
-                f"what are the main building blocks and how do they talk to each other? "
-                f"(For example: User -> Web UI -> Backend -> Database). A quick high-level summary is plenty!"
+                f"No problem! What I mean is: if you drew a simple whiteboard sketch of {project_name}, "
+                f"what are the main building blocks and how do they communicate? (e.g. Web UI -> Backend -> Database). A quick overview is great!"
             ),
             "challenges": (
-                f"All good! In real-world engineering, virtually no system is built without friction. "
-                f"What were the key obstacles, architectural bottlenecks, or failure modes you hit while building {project_name}? "
-                f"For instance, did you run into rate limits, data sync bugs, slow queries, or edge cases? Any real hurdle counts!"
+                f"All good! Every project hits unexpected friction or bugs—like slow database queries, rate limits, or concurrency issues. "
+                f"What was the toughest technical hurdle you bumped into with {tech_str}?"
             ),
             "solutions": (
-                f"Happy to clarify! In real-world engineering, overcoming friction requires concrete technical intervention. "
-                f"How did you end up fixing or working around that technical hurdle? "
-                f"For example, what specific measures did you take—did you rewrite a query, add caching, switch a library, or adjust system configuration?"
+                f"Happy to clarify! How did you end up fixing or working around that technical hurdle? "
+                f"For instance, did you add caching, rewrite a query, switch a library, or reconfigure settings? Any concrete step helps!"
             ),
             "tradeoffs": (
-                f"No worries! In engineering, every technical choice has pros and cons. "
-                f"What was a compromise or downside with this design? (For example: was it slightly slower to develop, "
-                f"more complex to maintain, or took more memory?)"
+                f"No worries! Every tech choice involves compromises. What was a downside or limitation with this setup "
+                f"(for instance, extra maintenance, steeper learning curve, or memory usage)?"
             ),
             "performance": (
-                f"Happy to explain! Did you track or notice any speed, throughput, or capacity numbers? "
-                f"Even rough ballpark estimates (like 'handled ~100 requests/sec' or 'cut processing time in half') "
-                f"or just 'it felt noticeably faster' are totally fine!"
+                f"Happy to explain! Did you notice or track any speed, throughput, or capacity metrics? "
+                f"Even ballpark estimates (like 'under 200ms' or 'processed thousands of records') or 'felt much faster' are totally fine!"
             ),
             "impact": (
                 f"No problem at all! What was the end result or real-world benefit once {project_name} was in place? "
-                f"Did it save people time, automate a tedious process, or get used by active users?"
+                f"Did it save people time, automate a tedious process, or support active users?"
             )
         }
 
         q_text = fallback_clarifications.get(
             target_area,
-            f"No problem! What I'm asking is: could you share a quick, plain-English detail about how {project_name} works? Even a single sentence is super helpful!"
+            f"No problem! Could you share a quick, plain-English detail about how {project_name} works? Even a single sentence is super helpful!"
         )
 
         return GeneratedQuestion(
@@ -357,19 +438,19 @@ class InterviewEngine:
             GeneratedQuestion(
                 id="q_prob_1",
                 target_area="problem",
-                question=f"In plain terms, what core problem or pain point was {project.name} built to solve?",
+                question=f"To kick things off, what was the core problem or user pain point {project.name} was built to solve?",
                 rationale="Uncovers the problem statement and motivation simply."
             ),
             GeneratedQuestion(
                 id="q_arch_1",
                 target_area="architecture",
-                question=f"How does data move through {project.name} from start to finish? (A quick high-level overview is plenty!)",
+                question=f"At a high level, how does data flow through {project.name} from the user to your backend services?",
                 rationale="Extracts system topology and component interactions."
             ),
             GeneratedQuestion(
                 id="q_dec_1",
                 target_area="technical_decisions",
-                question=f"What was the main reason you picked {', '.join(project.technologies[:2]) if project.technologies else 'this stack'} over other alternatives?",
+                question=f"What made you choose {', '.join(project.technologies[:2]) if project.technologies else 'this tech stack'} over other options you might have considered?",
                 rationale="Identifies decision-making criteria simply."
             )
         ]
@@ -425,7 +506,8 @@ class InterviewEngine:
         latest_question: str,
         latest_answer: str,
         history: List[Dict[str, str]],
-        skip_area: Optional[str] = None
+        skip_area: Optional[str] = None,
+        force_continue: bool = False
     ) -> FollowUpQuestionResult:
         """Analyze answer and select ONE high-value follow-up or stop."""
         
@@ -437,39 +519,48 @@ class InterviewEngine:
         has_mitigation = self.has_concrete_mitigation(knowledge, coverage)
         obstacle_gate_passed = has_obstacle and has_mitigation
 
-        # Hard upper ceiling to prevent infinite loops if candidate continuously refuses to provide an obstacle
-        max_hard_ceiling = settings.MAX_INTERVIEW_ROUNDS + 2
-        if current_round >= max_hard_ceiling:
-            return FollowUpQuestionResult(
-                has_next_question=False,
-                stop_reason="Maximum configured interview rounds reached.",
-                coverage_update={}
-            )
-
-        # 1. Check if all 8 dimensions are SUFFICIENT (and obstacle phase-gate passed)
+        # Check if all 8 dimensions are SUFFICIENT (and obstacle phase-gate passed) -> 100% complete
         all_sufficient = all(cov_dict.get(a) == CoverageLevel.SUFFICIENT.value for a in self.AREA_PRIORITIES)
         if all_sufficient and obstacle_gate_passed:
             return FollowUpQuestionResult(
                 has_next_question=False,
-                stop_reason="All 8 technical dimensions sufficiently covered for an outstanding case study.",
+                stop_reason="All 8 technical dimensions are 100% completed and sufficiently covered for an outstanding case study.",
                 coverage_update={}
             )
 
-        # 2. High completeness exit: if at least 7/8 dimensions are SUFFICIENT and we've gathered substantial depth
-        if sufficient_count >= 7 and current_round >= 5 and obstacle_gate_passed:
-            return FollowUpQuestionResult(
-                has_next_question=False,
-                stop_reason="Comprehensive technical depth gathered across all key dimensions.",
-                coverage_update={}
-            )
+        if not force_continue:
+            # Hard upper ceiling to prevent infinite loops if candidate continuously refuses to provide an obstacle
+            max_hard_ceiling = settings.MAX_INTERVIEW_ROUNDS + 2
+            if current_round >= max_hard_ceiling:
+                return FollowUpQuestionResult(
+                    has_next_question=False,
+                    stop_reason="Maximum configured interview rounds reached.",
+                    coverage_update={}
+                )
 
-        # 3. Standard max interview rounds reached: allows stopping only if obstacle phase gate has passed
-        if current_round >= settings.MAX_INTERVIEW_ROUNDS and obstacle_gate_passed:
-            return FollowUpQuestionResult(
-                has_next_question=False,
-                stop_reason="Maximum configured interview rounds reached.",
-                coverage_update={}
-            )
+            # High completeness exit: if at least 7/8 dimensions are SUFFICIENT and we've gathered substantial depth
+            if sufficient_count >= 7 and current_round >= 5 and obstacle_gate_passed:
+                return FollowUpQuestionResult(
+                    has_next_question=False,
+                    stop_reason="Comprehensive technical depth gathered across all key dimensions.",
+                    coverage_update={}
+                )
+
+            # Standard max interview rounds reached: allows stopping only if obstacle phase gate has passed
+            if current_round >= settings.MAX_INTERVIEW_ROUNDS and obstacle_gate_passed:
+                return FollowUpQuestionResult(
+                    has_next_question=False,
+                    stop_reason="Maximum configured interview rounds reached.",
+                    coverage_update={}
+                )
+        else:
+            # In force_continue mode, allow continuing until 100% coverage with an extreme safety bound
+            if current_round >= 30:
+                return FollowUpQuestionResult(
+                    has_next_question=False,
+                    stop_reason="Maximum extension rounds reached.",
+                    coverage_update={}
+                )
 
         # Collect list of all uncovered areas
         uncovered_areas = [
@@ -524,10 +615,12 @@ class InterviewEngine:
                 target_area = "challenges"
             elif not has_mitigation and skip_area != "solutions":
                 target_area = "solutions"
+            elif uncovered_areas:
+                target_area = uncovered_areas[0]
             else:
                 return FollowUpQuestionResult(
                     has_next_question=False,
-                    stop_reason="All technical dimensions sufficiently covered for case study.",
+                    stop_reason="All 8 technical dimensions are 100% completed and sufficiently covered for an outstanding case study.",
                     coverage_update={}
                 )
 
@@ -574,22 +667,22 @@ class InterviewEngine:
         except Exception:
             pass
 
-        # Dynamic, tech-anchored fallback questions compelling rich details
+        # Natural, conversational fallback questions asking exactly ONE question
         tech_two = ", ".join(knowledge.technologies[:2]) if knowledge.technologies else "your stack"
         fallback_questions = {
-            "problem": f"What specific user pain point or technical bottleneck led to building {knowledge.project_name}, and why were existing tools inadequate?",
-            "architecture": f"How does data flow end-to-end through {knowledge.project_name}, and what are the key architectural components connecting {tech_two}?",
-            "technical_decisions": f"What was the main reason you chose {tech_two} over alternative tools, and what specific capability or constraint drove that decision?",
-            "challenges": f"In real-world engineering, virtually no system is built without friction. What were the key obstacles, architectural bottlenecks, or failure modes you encountered while building {knowledge.project_name} with {tech_two}, and what specific measures did you take to overcome them?",
-            "solutions": f"In real-world engineering, overcoming friction requires concrete technical intervention. What specific architectural measures, algorithmic tweaks, or mitigations did you implement to overcome that obstacle with {tech_two}?",
-            "tradeoffs": f"Every engineering choice involves trade-offs—what downsides, operational overhead, or limitations did you accept with {tech_two}?",
-            "performance": f"Did you measure any latency, throughput, or scale metrics with {tech_two} (even ballpark estimates like ms or requests/sec)?",
-            "impact": f"Once deployed, what concrete outcome, user adoption, or measurable business benefit did {knowledge.project_name} deliver?"
+            "problem": f"What was the core problem or user pain point that {knowledge.project_name} was created to solve?",
+            "architecture": f"At a high level, how does data flow through {knowledge.project_name} between {tech_two} and your storage?",
+            "technical_decisions": f"What led you to choose {tech_two} over other alternatives for this project?",
+            "challenges": f"When building with {tech_two}, what was the trickiest technical hurdle or bottleneck you ran into?",
+            "solutions": f"How did you end up solving or working around that technical challenge?",
+            "tradeoffs": f"Were there any trade-offs or limitations with using {tech_two} that you had to accept?",
+            "performance": f"Did you observe or measure any performance metrics with {tech_two}, like latency or throughput (even rough ballpark numbers)?",
+            "impact": f"Once {knowledge.project_name} was up and running, what was the most meaningful impact or outcome it delivered?"
         }
 
         q_text = fallback_questions.get(
             target_area,
-            f"Could you share a key technical mechanism or outcome from your work with {tech_two}?"
+            f"Could you share a bit more detail about how you worked with {tech_two}?"
         )
 
         return FollowUpQuestionResult(

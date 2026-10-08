@@ -247,11 +247,19 @@ class KnowledgeManager:
         """Determine coverage state for each knowledge area based on concrete facts."""
         return KnowledgeCoverage(
             problem=(
-                CoverageLevel.SUFFICIENT if (knowledge.problem.statement and knowledge.problem.context)
+                CoverageLevel.SUFFICIENT if (
+                    (knowledge.problem.statement and knowledge.problem.context)
+                    or (knowledge.problem.statement and len(knowledge.problem.statement.strip()) >= 20)
+                    or any(e.category == "problem" and len(e.fact.strip()) >= 15 for e in knowledge.evidence if e.source != "resume")
+                )
                 else (CoverageLevel.PARTIAL if knowledge.problem.statement else CoverageLevel.UNKNOWN)
             ),
             architecture=(
-                CoverageLevel.SUFFICIENT if (knowledge.architecture.overview and len(knowledge.architecture.components) > 0)
+                CoverageLevel.SUFFICIENT if (
+                    (knowledge.architecture.overview and len(knowledge.architecture.components) > 0)
+                    or (knowledge.architecture.overview and len(knowledge.architecture.overview.strip()) >= 25)
+                    or any(e.category == "architecture" and len(e.fact.strip()) >= 15 for e in knowledge.evidence if e.source != "resume")
+                )
                 else (CoverageLevel.PARTIAL if (knowledge.architecture.overview or len(knowledge.architecture.components) > 0) else CoverageLevel.UNKNOWN)
             ),
             technical_decisions=(
@@ -279,4 +287,3 @@ class KnowledgeManager:
                 else CoverageLevel.UNKNOWN
             )
         )
-
