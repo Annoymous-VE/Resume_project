@@ -1,4 +1,4 @@
-const DEPLOYED_BACKEND_URL = "https://resume-project-osw9.onrender.com";
+const DEPLOYED_BACKEND_URL = "https://resume-project-gye0.onrender.com";
 const LOCAL_BACKEND_URL = "http://localhost:8000";
 
 const TOKEN_KEY = "rcs_auth_token";

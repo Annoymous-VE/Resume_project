@@ -5,8 +5,8 @@ An AI-orchestrated, backend-first system that ingests arbitrary resumes (PDF, DO
 ## Deployed Environments
 
 - **Frontend**: [https://resume-project-sooty-eta.vercel.app/](https://resume-project-sooty-eta.vercel.app/)
-- **Backend API**: [https://resume-project-osw9.onrender.com/](https://resume-project-osw9.onrender.com/)
-- **Backend Docs**: [https://resume-project-osw9.onrender.com/docs](https://resume-project-osw9.onrender.com/docs)
+- **Backend API**: [https://resume-project-gye0.onrender.com/](https://resume-project-gye0.onrender.com/)
+- **Backend Docs**: [https://resume-project-gye0.onrender.com/docs](https://resume-project-gye0.onrender.com/docs)
 
 ## Project Structure
 

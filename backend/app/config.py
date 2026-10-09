@@ -25,7 +25,7 @@ def _get_cors_origins() -> list[str]:
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8000",
         "https://resume-project-sooty-eta.vercel.app",
-        "https://resume-project-osw9.onrender.com",
+        "https://resume-project-gye0.onrender.com",
     ]
     custom = os.getenv("CORS_ORIGINS", "")
     if custom:
@@ -37,7 +37,7 @@ def _get_cors_origins() -> list[str]:
 
 class Settings(BaseModel):
     PROJECT_NAME: str = "Resume-to-Technical-Case-Study System"
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{STORAGE_DIR / 'app.db'}")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{STORAGE_DIR / 'app.db'}").strip().strip("'\"")
     
     # LLM Settings
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "mock").strip()  # "gemini", "openai", or "mock"
