@@ -360,8 +360,45 @@ export default function App() {
   };
 
   const handleDashboardSelectInterview = async (proj) => {
-    setViewMode("wizard");
-    await handleStartInterview(proj);
+    // Do NOT switch to wizard mode yet — stay on dashboard while loading.
+    // Switching first would cause currentStep to become 1 (Upload Resume)
+    // because interviewSession/projects are not set yet, showing the upload
+    // page with the loading spinner during the API call.
+    setLoading(true);
+    setError(null);
+    try {
+      setSelectedProject(proj);
+      const session = await startInterview(proj.id);
+      setInterviewSession(session);
+      setCaseStudy(null);
+      setCaseStudiesMap({ technical: null, client_brochure: null });
+      setActiveVariant("technical");
+      setIsCaseStudyStep(false);
+      setAnswerInput("");
+      setPendingAnswer(null);
+      setGeneratingCaseStudy(false);
+
+      // Switch to wizard only after interview session is ready so
+      // currentStep derives correctly as 3 (Interview) on first render.
+      setViewMode("wizard");
+
+      // Pre-fetch existing case studies in the background
+      fetchAllCaseStudies(proj.id)
+        .then((existingList) => {
+          if (Array.isArray(existingList) && existingList.length > 0) {
+            const map = { technical: null, client_brochure: null };
+            existingList.forEach((item) => {
+              if (item.variant_type) map[item.variant_type] = item;
+            });
+            setCaseStudiesMap(map);
+          }
+        })
+        .catch(() => {});
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDashboardSelectCaseStudy = async (proj) => {
