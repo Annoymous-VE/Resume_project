@@ -46,8 +46,13 @@ class Settings(BaseModel):
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "").strip()
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-3.5-flash-lite").strip()
 
-    # Interview defaults (7 rounds max guarantees high efficiency without infinite loops)
-    MAX_INTERVIEW_ROUNDS: int = int(os.getenv("MAX_INTERVIEW_ROUNDS", "7"))
+
+    # Dynamic Interview settings
+    # Primary interview stopping is coverage-driven (targeting 100% across all 8 dimensions).
+    # MAX_INTERVIEW_SAFETY_LIMIT / MAX_INTERVIEW_ROUNDS serves as an upper safety circuit-breaker (default: 20)
+    # ensuring adaptive interviews can naturally scale (e.g. 5, 10, or up to 13+ rounds) while preventing runaway loops.
+    MAX_INTERVIEW_SAFETY_LIMIT: int = int(os.getenv("MAX_INTERVIEW_SAFETY_LIMIT", os.getenv("MAX_INTERVIEW_ROUNDS", "20")))
+    MAX_INTERVIEW_ROUNDS: int = int(os.getenv("MAX_INTERVIEW_ROUNDS", "20"))
 
     # Auth & JWT Settings
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "resume-case-study-super-secret-jwt-signing-key-32bytes-min-2026")

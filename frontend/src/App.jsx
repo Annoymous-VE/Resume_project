@@ -368,7 +368,23 @@ export default function App() {
     setError(null);
     try {
       setSelectedProject(proj);
-      const session = await startInterview(proj.id);
+      let session = await startInterview(proj.id);
+
+      // If the session was completed/paused early but has not reached 100% coverage,
+      // and has no pending question, automatically continue to generate the next question
+      const cov = session?.coverage || {};
+      const CRITERIA_KEYS = ["problem", "architecture", "technical_decisions", "challenges", "solutions", "tradeoffs", "performance", "impact"];
+      const fulfilled = CRITERIA_KEYS.filter((k) => cov[k] === "SUFFICIENT").length;
+
+      if (fulfilled < 8 && !session.current_question) {
+        try {
+          const continued = await continueInterview(proj.id);
+          if (continued && continued.current_question) {
+            session = continued;
+          }
+        } catch (_) {}
+      }
+
       setInterviewSession(session);
       setCaseStudy(null);
       setCaseStudiesMap({ technical: null, client_brochure: null });
@@ -1109,22 +1125,28 @@ export default function App() {
                   {/* Interview Complete Banner */}
                   {interviewSession.status === "completed" && (
                     <div className="msg-wrapper-ai">
-                      <div className="bot-avatar" style={{ background: "linear-gradient(135deg, #059669, #34d399)" }}>✓</div>
-                      <div className="bubble-ai" style={{ borderLeft: "3px solid #34d399" }}>
-                        <span className="target-badge" style={{ color: "#34d399", background: "rgba(16, 185, 129, 0.15)", borderColor: "rgba(16, 185, 129, 0.4)" }}>
-                          {fulfilledCount >= 8 ? "Interview 100% Complete" : "Interview Complete"}
+                      <div className="bot-avatar" style={{ background: fulfilledCount >= 8 ? "linear-gradient(135deg, #059669, #34d399)" : "linear-gradient(135deg, #d97706, #f59e0b)" }}>
+                        {fulfilledCount >= 8 ? "✓" : "⏸"}
+                      </div>
+                      <div className="bubble-ai" style={{ borderLeft: fulfilledCount >= 8 ? "3px solid #34d399" : "3px solid #f59e0b" }}>
+                        <span className="target-badge" style={{ 
+                          color: fulfilledCount >= 8 ? "#34d399" : "#f59e0b", 
+                          background: fulfilledCount >= 8 ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)", 
+                          borderColor: fulfilledCount >= 8 ? "rgba(16, 185, 129, 0.4)" : "rgba(245, 158, 11, 0.4)" 
+                        }}>
+                          {fulfilledCount >= 8 ? "Interview 100% Complete" : `Interview Paused Early (${fulfilledCount}/8 covered)`}
                         </span>
                         <p style={{ margin: "0.25rem 0", lineHeight: 1.5 }}>
                           {fulfilledCount >= 8 ? (
                             <>🎉 <strong>All 8 technical dimensions are 100% completed!</strong> All {allEvidence.length} verified facts from your resume and interview exchanges have been captured and synchronized. Ready to generate your comprehensive case studies based on this complete interview.</>
                           ) : (
                             <>
-                              ✅ {interviewSession.stop_reason ? (
+                              ⏸️ {interviewSession.stop_reason ? (
                                 interviewSession.stop_reason.includes("Concluded by user")
                                   ? interviewSession.stop_reason
                                   : `${fulfilledCount}/8 technical dimensions covered.`
                               ) : `${fulfilledCount}/8 technical dimensions covered.`}{" "}
-                              You can generate case studies now based on all captured answers ({conversationFacts.length} interview facts), or continue the interview to complete remaining topics.
+                              You can generate case studies now based on all captured answers ({conversationFacts.length} interview facts), or resume the interview anytime to complete remaining topics.
                             </>
                           )}
                         </p>

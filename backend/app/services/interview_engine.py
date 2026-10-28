@@ -528,39 +528,14 @@ class InterviewEngine:
                 coverage_update={}
             )
 
-        if not force_continue:
-            # Hard upper ceiling to prevent infinite loops if candidate continuously refuses to provide an obstacle
-            max_hard_ceiling = settings.MAX_INTERVIEW_ROUNDS + 2
-            if current_round >= max_hard_ceiling:
-                return FollowUpQuestionResult(
-                    has_next_question=False,
-                    stop_reason="Maximum configured interview rounds reached.",
-                    coverage_update={}
-                )
-
-            # High completeness exit: if at least 7/8 dimensions are SUFFICIENT and we've gathered substantial depth
-            if sufficient_count >= 7 and current_round >= 5 and obstacle_gate_passed:
-                return FollowUpQuestionResult(
-                    has_next_question=False,
-                    stop_reason="Comprehensive technical depth gathered across all key dimensions.",
-                    coverage_update={}
-                )
-
-            # Standard max interview rounds reached: allows stopping only if obstacle phase gate has passed
-            if current_round >= settings.MAX_INTERVIEW_ROUNDS and obstacle_gate_passed:
-                return FollowUpQuestionResult(
-                    has_next_question=False,
-                    stop_reason="Maximum configured interview rounds reached.",
-                    coverage_update={}
-                )
-        else:
-            # In force_continue mode, allow continuing until 100% coverage with an extreme safety bound
-            if current_round >= 30:
-                return FollowUpQuestionResult(
-                    has_next_question=False,
-                    stop_reason="Maximum extension rounds reached.",
-                    coverage_update={}
-                )
+        # Safety upper circuit-breaker ceiling to prevent runaway loops if candidate cannot provide answers
+        safety_limit = getattr(settings, "MAX_INTERVIEW_SAFETY_LIMIT", getattr(settings, "MAX_INTERVIEW_ROUNDS", 20))
+        if current_round >= safety_limit:
+            return FollowUpQuestionResult(
+                has_next_question=False,
+                stop_reason="Maximum configured interview rounds reached.",
+                coverage_update={}
+            )
 
         # Collect list of all uncovered areas
         uncovered_areas = [

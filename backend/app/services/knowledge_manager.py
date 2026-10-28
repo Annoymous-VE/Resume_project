@@ -126,6 +126,89 @@ class KnowledgeManager:
         else:
             current_knowledge.implementation.append(fact_text)
 
+    @staticmethod
+    def is_explicit_negative_or_na_response(target_area: str, text: str) -> Optional[str]:
+        """Detect whether the user provided an explicit, valid 'not applicable' or 'no formal metrics/tradeoffs' response.
+        Returns a standardized, professional domain fact string if detected, or None."""
+        if not text:
+            return None
+        clean = text.strip().lower().rstrip(".!?,")
+
+        # 1. Tradeoffs dimension
+        if target_area == "tradeoffs":
+            tradeoff_markers = [
+                "no major tradeoffs",
+                "no tradeoffs",
+                "no tradeoff",
+                "no real tradeoffs",
+                "not that many tradeoffs",
+                "not many tradeoffs",
+                "didn't face any tradeoffs",
+                "did not face any tradeoffs",
+                "no significant tradeoffs",
+                "standard conventions; no major tradeoffs",
+                "standard engineering conventions; no major tradeoffs",
+                "none really",
+                "not really any tradeoffs",
+                "not really",
+                "no compromises",
+                "no real downsides",
+                "no downsides"
+            ]
+            if clean in tradeoff_markers or any(m in clean for m in [
+                "no major tradeoff", "no tradeoff", "not that many tradeoff", "not many tradeoff",
+                "no real tradeoff", "no significant tradeoff", "standard engineering conventions", "no major tradeoffs"
+            ]):
+                return "Standard engineering conventions followed; no major architectural tradeoffs or compromises accepted."
+
+        # 2. Performance dimension
+        elif target_area == "performance":
+            performance_markers = [
+                "no exact numbers",
+                "no exact performance benchmarks recorded",
+                "no benchmarks recorded",
+                "no performance benchmarks",
+                "no benchmarks",
+                "didn't measure performance",
+                "did not measure performance",
+                "didn't track performance",
+                "did not track performance",
+                "no metrics recorded",
+                "no metrics",
+                "no exact metrics",
+                "no formal metrics",
+                "not benchmarked",
+                "wasn't benchmarked",
+                "haven't benchmarked",
+                "standard latency",
+                "latency was not an issue",
+                "speed was not an issue",
+                "didn't track latency",
+                "did not track latency"
+            ]
+            if clean in performance_markers or any(m in clean for m in [
+                "no exact performance", "no benchmarks recorded", "no exact numbers",
+                "no formal metrics", "didn't track latency", "didn't measure latency",
+                "no metrics recorded", "standard response times", "no performance benchmarks"
+            ]):
+                return "Standard operational performance; no formal millisecond latency benchmarks or SLA metrics were tracked."
+
+        # 3. Impact dimension
+        elif target_area == "impact":
+            impact_markers = [
+                "internal use only",
+                "for internal use",
+                "personal project",
+                "no commercial metrics",
+                "no formal business metrics",
+                "no user metrics",
+                "used internally by the team"
+            ]
+            if any(m in clean for m in impact_markers):
+                return "Designed for internal/team utility; automated workflow without formal public business metrics."
+
+        return None
+
     async def extract_and_merge_answer(
         self,
         current_knowledge: ProjectKnowledge,
@@ -200,6 +283,22 @@ class KnowledgeManager:
             except Exception:
                 pass
 
+        # 3. Check for explicit negative/NA acknowledgment if target area was not populated by LLM
+        na_fact = self.is_explicit_negative_or_na_response(target_area, clean_ans)
+        if na_fact:
+            has_target_cat = any(e.category == target_area and e.source == "conversation" for e in current_knowledge.evidence)
+            if not has_target_cat:
+                now_str = datetime.now(timezone.utc).isoformat()
+                current_knowledge.evidence.append(ProvenanceFact(
+                    fact=na_fact,
+                    source="conversation",
+                    confidence=0.98,
+                    category=target_area,
+                    created_at=now_str
+                ))
+                self._apply_fact_to_field(current_knowledge, target_area, na_fact)
+            return current_knowledge
+
         # Fallback to direct merge only if LLM is absent or failed, and text contains genuine factual content
         if not self._is_non_factual_input(clean_ans):
             return self.merge_answer(current_knowledge, target_area, clean_ans, exchange_id)
@@ -228,6 +327,19 @@ class KnowledgeManager:
         """Merge facts from a user answer into structured knowledge with provenance (synchronous)."""
         now_str = datetime.now(timezone.utc).isoformat()
         clean_ans = answer_text.strip()
+        na_fact = self.is_explicit_negative_or_na_response(target_area, clean_ans)
+        if na_fact:
+            fact_item = ProvenanceFact(
+                fact=na_fact,
+                source="conversation",
+                confidence=0.98,
+                category=target_area,
+                created_at=now_str
+            )
+            current_knowledge.evidence.append(fact_item)
+            self._apply_fact_to_field(current_knowledge, target_area, na_fact)
+            return current_knowledge
+
         if self._is_non_factual_input(clean_ans):
             return current_knowledge
 

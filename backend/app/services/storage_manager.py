@@ -108,3 +108,49 @@ class StorageManager:
                 logger.error(f"Error downloading from Supabase Storage: {e}")
 
         return None
+
+    async def delete_resume_file(self, storage_path: str) -> bool:
+        """
+        Deletes the resume file from Supabase Storage and local cache if present.
+        """
+        deleted_remote = False
+        filename = Path(storage_path).name
+        local_dest = UPLOADS_DIR / filename
+        if local_dest.exists():
+            try:
+                local_dest.unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning(f"Could not delete local cache file: {e}")
+
+        if self.is_supabase_enabled and storage_path:
+            endpoint = f"{self.supabase_url}/storage/v1/object/{self.bucket}"
+            headers = {
+                "Authorization": f"Bearer {self.supabase_key}",
+                "apikey": self.supabase_key,
+                "Content-Type": "application/json"
+            }
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.request(
+                        "DELETE",
+                        endpoint,
+                        headers=headers,
+                        json={"prefixes": [storage_path]}
+                    )
+                    if resp.status_code in (200, 204):
+                        logger.info(f"Successfully deleted {storage_path} from Supabase bucket '{self.bucket}'.")
+                        deleted_remote = True
+                    else:
+                        # Fallback to direct path deletion if supported
+                        single_endpoint = f"{self.supabase_url}/storage/v1/object/{self.bucket}/{storage_path}"
+                        fallback_resp = await client.delete(single_endpoint, headers=headers)
+                        if fallback_resp.status_code in (200, 204):
+                            logger.info(f"Successfully deleted {storage_path} from Supabase bucket via single-object endpoint.")
+                            deleted_remote = True
+                        else:
+                            logger.error(f"Supabase delete failed ({resp.status_code}): {resp.text}")
+            except Exception as e:
+                logger.error(f"Error deleting from Supabase Storage: {e}")
+
+        return deleted_remote
+

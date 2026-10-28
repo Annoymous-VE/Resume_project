@@ -149,7 +149,12 @@ async def answer_question(
     knowledge_record = await project_repo.get_knowledge(project_id)
     knowledge = ProjectKnowledge.model_validate(knowledge_record.knowledge_json) if knowledge_record else None
 
-    if session.status == "completed":
+    # If session is marked completed, only reject if there is NO unanswered exchange matching this submission
+    has_unanswered_submission = any(
+        ex.id == submission.exchange_id and ex.answer is None
+        for ex in session.exchanges
+    )
+    if session.status == "completed" and not has_unanswered_submission:
         return {
             "session_id": session.id,
             "status": "completed",

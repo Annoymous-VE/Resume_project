@@ -4,7 +4,9 @@ from app.models.entities import User
 from app.api.dependencies import (
     get_project_repo,
     get_optional_current_user,
-    ProjectRepository
+    get_storage_manager,
+    ProjectRepository,
+    StorageManager
 )
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
@@ -144,10 +146,20 @@ async def delete_project(
 async def delete_resume(
     resume_id: str,
     current_user: Optional[User] = Depends(get_optional_current_user),
-    project_repo: ProjectRepository = Depends(get_project_repo)
+    project_repo: ProjectRepository = Depends(get_project_repo),
+    storage_mgr: StorageManager = Depends(get_storage_manager)
 ):
     user_id = current_user.id if current_user else None
+    resume = await project_repo.get_resume(resume_id, user_id=user_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found or unauthorized.")
+
+    file_path = resume.file_path
     deleted = await project_repo.delete_resume(resume_id, user_id=user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Resume not found or unauthorized.")
+
+    if file_path:
+        await storage_mgr.delete_resume_file(file_path)
+
     return {"message": "Resume deleted successfully."}

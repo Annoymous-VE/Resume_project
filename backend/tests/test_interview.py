@@ -3,7 +3,7 @@ from app.ai.llm import MockLLMClient
 from app.services.knowledge_manager import KnowledgeManager
 from app.services.interview_engine import InterviewEngine
 from app.ai.schemas.project import ExtractedProject
-from app.ai.schemas.knowledge import CoverageLevel, ProjectKnowledge, KnowledgeCoverage
+from app.ai.schemas.knowledge import CoverageLevel, ProjectKnowledge, KnowledgeCoverage, ObstacleMitigationPair
 
 @pytest.mark.asyncio
 async def test_adaptive_interview_lifecycle():
@@ -43,11 +43,11 @@ async def test_adaptive_interview_lifecycle():
     )
     assert len(knowledge.architecture.components) > 0
 
-    # 5. Check stopping condition
+    # 5. Check stopping condition (exceeds safety limit)
     stop_res = await engine.select_next_question(
         knowledge=knowledge,
         coverage=cov,
-        current_round=10, # Exceeds MAX_INTERVIEW_ROUNDS
+        current_round=20, # Exceeds MAX_INTERVIEW_SAFETY_LIMIT
         latest_question="Sample Q",
         latest_answer="Sample A",
         history=[]
@@ -486,30 +486,20 @@ async def test_continue_interview_resumes_to_100_percent():
     assert cov_dict["impact"] == CoverageLevel.UNKNOWN
     assert sum(1 for v in cov_dict.values() if v == CoverageLevel.SUFFICIENT.value) == 7
 
-    # 2. Standard call at round 6 stops early due to high completeness (7/8)
+    # 2. Dynamic 100% targeting: at round 6 with 7/8 dimensions, engine continues naturally to target the missing impact dimension
     standard_res = await engine.select_next_question(
         knowledge=knowledge,
         coverage=coverage,
         current_round=6,
         latest_question="What performance metrics did you measure?",
         latest_answer="12k tx/sec with 25ms latency",
-        history=[],
-        force_continue=False
+        history=[]
     )
-    assert standard_res.has_next_question is False
+    assert standard_res.has_next_question is True
+    assert standard_res.question.target_area == "impact"
 
-    # 3. Continued call with force_continue=True OVERRIDES early stop and targets missing dimension (impact)
-    continue_res = await engine.select_next_question(
-        knowledge=knowledge,
-        coverage=coverage,
-        current_round=6,
-        latest_question="What performance metrics did you measure?",
-        latest_answer="12k tx/sec with 25ms latency",
-        history=[],
-        force_continue=True
-    )
-    assert continue_res.has_next_question is True
-    assert continue_res.question.target_area == "impact"
+    # 3. Continued call targets the unfulfilled dimension
+    continue_res = standard_res
 
     # 4. Answer the missing impact question
     knowledge = km.merge_answer(
@@ -544,3 +534,132 @@ async def test_continue_interview_resumes_to_100_percent():
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_fast_track_dynamic_completion():
+    """Verify that candidate providing rich multi-criteria answers can reach 100% completion
+    in just 5 rounds without unnecessary questions."""
+    engine = InterviewEngine(llm_client=None)
+    km = KnowledgeManager(llm_client=None)
+
+    project = ExtractedProject(
+        id="fast_proj",
+        name="Realtime Event Broker",
+        description="High throughput event broker",
+        technologies=["Rust", "Kafka", "PostgreSQL"],
+        contributions=["Engineered async network broker", "Implemented disk WAL"],
+        outcomes=["Handled 500k msg/sec with zero loss"]
+    )
+    knowledge = km.initialize_knowledge(project)
+
+    # Round 1: Problem + Architecture
+    knowledge = km.merge_answer(
+        current_knowledge=knowledge,
+        target_area="architecture",
+        answer_text="Client sends JSON to broker daemon -> memory WAL -> async flush to Kafka and Postgres.",
+        exchange_id="r1"
+    )
+
+    # Round 2: Technical decisions
+    knowledge = km.merge_answer(
+        current_knowledge=knowledge,
+        target_area="technical_decisions",
+        answer_text="Chose Rust over Go for deterministic memory management and zero garbage collection pauses.",
+        exchange_id="r2"
+    )
+
+    # Round 3: Challenges + Solutions (Obstacle Phase Gate)
+    knowledge.challenges.append("TCP socket buffer exhaustion under 100k concurrent client connections")
+    knowledge.solutions.append("Implemented epoll-based connection pooling with SO_REUSEPORT socket sharding")
+    knowledge.obstacle_mitigations.append(ObstacleMitigationPair(
+        obstacle="TCP socket buffer exhaustion under 100k concurrent client connections",
+        measures_taken="Implemented epoll-based connection pooling with SO_REUSEPORT socket sharding"
+    ))
+
+    # Round 4: Tradeoffs
+    knowledge = km.merge_answer(
+        current_knowledge=knowledge,
+        target_area="tradeoffs",
+        answer_text="Unsafe blocks required strict manual verification, increasing initial code review time.",
+        exchange_id="r4"
+    )
+
+    # Round 5: Performance
+    knowledge = km.merge_answer(
+        current_knowledge=knowledge,
+        target_area="performance",
+        answer_text="Maintained p99 latency under 2.4ms under 500k msg/sec load.",
+        exchange_id="r5"
+    )
+
+    coverage = km.compute_coverage(knowledge)
+    cov_dict = coverage.model_dump()
+    assert all(cov_dict[a] == CoverageLevel.SUFFICIENT.value for a in engine.AREA_PRIORITIES)
+
+    # Engine evaluation at Round 5
+    res = await engine.select_next_question(
+        knowledge=knowledge,
+        coverage=coverage,
+        current_round=5,
+        latest_question="What were the performance metrics?",
+        latest_answer="Maintained p99 latency under 2.4ms under 500k msg/sec load.",
+        history=[]
+    )
+    assert res.has_next_question is False
+    assert "100%" in res.stop_reason
+
+
+@pytest.mark.asyncio
+async def test_na_and_benchmark_free_domain_facts():
+    """Verify that candidate submitting benchmark-free or standard-tradeoff responses
+    cleanly fulfills those dimensions to achieve 100%."""
+    engine = InterviewEngine(llm_client=None)
+    km = KnowledgeManager(llm_client=None)
+
+    knowledge = ProjectKnowledge(
+        project_id="internal_tool",
+        project_name="Data Sync Tool",
+        technologies=["Python", "SQLite"],
+        technical_decisions=["Used SQLite for zero-configuration embedded storage"],
+        challenges=["Lock contention during bulk import"],
+        solutions=["Enabled WAL journal mode"],
+        obstacle_mitigations=[
+            ObstacleMitigationPair(
+                obstacle="Lock contention during bulk import",
+                measures_taken="Enabled WAL journal mode"
+            )
+        ],
+        impact=["Saved team 4 hours per week"]
+    )
+    knowledge.problem.statement = "Synchronize tabular spreadsheets into local database."
+    knowledge.problem.context = "Spreadsheet data was out of sync across team."
+    knowledge.architecture.overview = "Python daemon reading CSV and writing into SQLite WAL database."
+    knowledge.architecture.components = ["CSV Parser", "SQLite DB"]
+
+    # At this point, 6/8 dimensions are fulfilled (tradeoffs and performance are missing)
+    cov = km.compute_coverage(knowledge)
+    assert cov.tradeoffs == CoverageLevel.UNKNOWN
+    assert cov.performance == CoverageLevel.UNKNOWN
+
+    # Candidate answers with standard N/A quick replies
+    knowledge = km.merge_answer(knowledge, "tradeoffs", "no not that many tradeoffs", "ex_t")
+    knowledge = km.merge_answer(knowledge, "performance", "No exact performance benchmarks recorded.", "ex_p")
+
+    updated_cov = km.compute_coverage(knowledge)
+    assert updated_cov.tradeoffs == CoverageLevel.SUFFICIENT
+    assert updated_cov.performance == CoverageLevel.SUFFICIENT
+
+    # Now all 8 dimensions are SUFFICIENT -> 100%
+    assert all(v == CoverageLevel.SUFFICIENT.value for v in updated_cov.model_dump().values())
+
+    res = await engine.select_next_question(
+        knowledge=knowledge,
+        coverage=updated_cov,
+        current_round=8,
+        latest_question="Any benchmarks?",
+        latest_answer="No exact performance benchmarks recorded.",
+        history=[]
+    )
+    assert res.has_next_question is False
+    assert "100%" in res.stop_reason
